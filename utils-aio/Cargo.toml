@@ -6,12 +6,15 @@ edition = "2021"
 [lib]
 name = "utils_aio"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[features]
+default = []
+codec = ["tokio-util", "prost"]
 
 [dependencies]
 bytes = "1.1.0"
-prost = "0.9"
-tokio-util = { version = "0.7.1", features = ["codec"] }
-async-tungstenite = { version = "0.16" }
+prost = { version = "0.9", optional = true }
+tokio-util = { version = "0.7.1", default-features = false, features = [
+    "codec",
+], optional = true }
 futures = "0.3"
 futures-util = "0.3"

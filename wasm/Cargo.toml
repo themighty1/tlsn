@@ -1,0 +1,44 @@
+[package]
+name = "wasm"
+version = "0.1.0"
+edition = "2018"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = ["console_error_panic_hook"]
+
+[dependencies]
+pop-mpc-core = { path = "../mpc-core", default-features = false, features = [
+    "ss",
+    "proto",
+] }
+pop-mpc-aio = { path = "../mpc-aio" }
+pop-utils-aio = { path = "../utils-aio", features = ["codec"] }
+wasm-bindgen = "0.2"
+console_error_panic_hook = { version = "0.1", optional = true }
+web-sys = { version = "0.3", features = [
+    "console",
+    "BinaryType",
+    "Blob",
+    "ErrorEvent",
+    "FileReader",
+    "MessageEvent",
+    "ProgressEvent",
+    "WebSocket",
+] }
+ws_stream_wasm = { version = "0.7", features = ["tokio_io"] }
+futures = "0.3"
+wasm-bindgen-futures = "0.4.29"
+tokio-util = { version = "0.7.1", features = ["codec"] }
+p256 = "0.10.1"
+rand = { version = "0.8" }
+getrandom = { version = "0.2", features = ["js"] }
+
+[dev-dependencies]
+wasm-bindgen-test = "0.3"
+
+[profile.release]
+# Tell `rustc` to optimize for small code size.
+opt-level = "s"

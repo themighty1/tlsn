@@ -1,0 +1,50 @@
+mod utils;
+
+use mpc_aio::secret_share::{SecretShareMaster, SecretShareMessage};
+use mpc_aio::twopc::TwoPCProtocol;
+use mpc_core::proto;
+use tokio_util::codec::Framed;
+use utils_aio::codec::ProstCodecDelimited;
+use wasm_bindgen::prelude::*;
+use wasm_bindgen_futures::spawn_local;
+use web_sys::console;
+use ws_stream_wasm::WsMeta;
+
+use p256::elliptic_curve::sec1::ToEncodedPoint;
+use p256::SecretKey;
+use rand::thread_rng;
+
+#[wasm_bindgen]
+pub fn run() {
+    utils::set_panic_hook();
+    spawn_local(ot());
+}
+
+pub async fn ot() {}
+
+// pub async fn secret_share() {
+//     let point = SecretKey::random(&mut thread_rng())
+//         .public_key()
+//         .to_projective()
+//         .to_encoded_point(false);
+
+//     console::log_1(&"generated key".into());
+
+//     let (ws, wsio) = WsMeta::connect("ws://0.0.0.0:3212", None)
+//         .await
+//         .expect_throw("Could not create websocket");
+
+//     console::log_1(&"connected".into());
+
+//     let mut stream = Framed::new(
+//         wsio.into_io(),
+//         ProstCodecDelimited::<SecretShareMessage, proto::secret_share::SecretShareMessage>::default(
+//         ),
+//     );
+
+//     let mut master = SecretShareMaster::new();
+
+//     let share = master.run(&mut stream, point).await.unwrap();
+
+//     console::log_1(&format!("Done: {}", share).into());
+// }
