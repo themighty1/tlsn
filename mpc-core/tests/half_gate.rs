@@ -9,7 +9,10 @@ use mpc_core::{
 };
 use rand::SeedableRng;
 use rand_chacha::ChaCha12Rng;
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen_test::*;
 
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 #[test]
 fn test_and_gate() {
     let mut rng = ChaCha12Rng::from_entropy();
@@ -33,6 +36,7 @@ fn test_and_gate() {
     assert_eq!(ev.and_gate(&mut cipher, x[1], y[1], table, gid), z[1]);
 }
 
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 #[test]
 fn test_xor_gate() {
     let mut rng = ChaCha12Rng::from_entropy();
@@ -54,6 +58,7 @@ fn test_xor_gate() {
     assert_eq!(ev.xor_gate(x[1], y[1]), z[0]);
 }
 
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 #[test]
 fn test_inv_gate() {
     let mut rng = ChaCha12Rng::from_entropy();
