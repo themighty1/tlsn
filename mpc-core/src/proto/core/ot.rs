@@ -192,6 +192,8 @@ pub mod tests {
     use crate::ot::base::tests::fixtures::{ot_core_data, Data};
     use fixtures::*;
     use rstest::*;
+    #[cfg(target_arch = "wasm32")]
+    use wasm_bindgen_test::*;
 
     pub mod fixtures {
         use super::*;
@@ -213,6 +215,7 @@ pub mod tests {
         }
     }
 
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
     #[rstest]
     fn test_proto_ot(proto_base_core_data: &fixtures::ProtoData, ot_core_data: &Data) {
         let sender_setup: crate::ot::base::SenderSetup = proto_base_core_data
