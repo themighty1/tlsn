@@ -7,10 +7,11 @@ edition = "2021"
 name = "utils_aio"
 
 [features]
-default = ["mux", "duplex"]
+default = ["mux", "duplex", "duplex_latency"]
 codec = []
 mux = []
 duplex = []
+duplex_latency = []
 
 [dependencies]
 bytes.workspace = true
