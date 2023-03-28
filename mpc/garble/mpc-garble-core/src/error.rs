@@ -1,5 +1,3 @@
-use mpc_circuits::{CircuitId, GroupId};
-
 use mpc_core::commit::CommitmentError;
 
 /// Error associated with garbled circuits
@@ -32,8 +30,6 @@ pub enum Error {
 pub enum InputError {
     #[error("Invalid input id: {0}")]
     InvalidId(usize),
-    #[error("Input from wrong circuit: expected {0:?} got {1:?}")]
-    InvalidCircuit(CircuitId, CircuitId),
     #[error("Invalid input count: expected {0}, got {1}")]
     InvalidCount(usize, usize),
     #[error("Invalid wire count: expected {0}, got {1}")]
@@ -46,10 +42,10 @@ pub enum InputError {
 pub enum EncodingError {
     #[error("Uninitialized Label, id: {0}")]
     UninitializedLabel(usize),
-    #[error("Labels are not authentic for group {0:?}")]
-    InauthenticLabels(GroupId),
-    #[error("Invalid number of labels for group {0:?}, expected {1} got {2}")]
-    InvalidLabelCount(GroupId, usize, usize),
+    // #[error("Labels are not authentic for group {0:?}")]
+    // InauthenticLabels(GroupId),
+    // #[error("Invalid number of labels for group {0:?}, expected {1} got {2}")]
+    // InvalidLabelCount(GroupId, usize, usize),
     #[error("Invalid value, expected {0} bits got {1}")]
     InvalidValue(usize, usize),
     #[error("Invalid decoding, expected {0} bits got {1}")]
@@ -58,8 +54,8 @@ pub enum EncodingError {
     InvalidDecodingId(usize, usize),
     #[error("Incorrect number of decodings, expected {0} got {1}")]
     InvalidDecodingCount(usize, usize),
-    #[error("Invalid label commitment for group {0:?}")]
-    InvalidLabelCommitment(GroupId),
+    // #[error("Invalid label commitment for group {0:?}")]
+    // InvalidLabelCommitment(GroupId),
     #[error("Encoded set must contain at least 1 element")]
     EmptyEncodedSet,
     #[error("All elements in a set must correspond to the same circuit")]
@@ -68,8 +64,8 @@ pub enum EncodingError {
     DuplicateGroups,
     #[error("All elements in a set must have the same delta")]
     DeltaMismatch,
-    #[error("Invalid count in set for {0:?}: expected {1}, got {2}")]
-    InvalidCount(CircuitId, usize, usize),
-    #[error("Invalid id {1}, group not in {0:?}")]
-    InvalidId(CircuitId, usize),
+    // #[error("Invalid count in set for {0:?}: expected {1}, got {2}")]
+    // InvalidCount(CircuitId, usize, usize),
+    // #[error("Invalid id {1}, group not in {0:?}")]
+    // InvalidId(CircuitId, usize),
 }

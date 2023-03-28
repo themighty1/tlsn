@@ -1,10 +1,13 @@
 use std::sync::Arc;
 
-use mpc_circuits::{Circuit, GroupId, GroupValue, Value, WireGroup};
+use mpc_circuits::{
+    types::{Value, ValueType},
+    Circuit,
+};
 use mpc_core::Block;
 
 use super::{Active, Delta, Full, Label, LabelPair, LabelState, Labels};
-use crate::EncodingError;
+use crate::error::EncodingError;
 
 /// Collection of validated labels corresponding to a wire group
 #[derive(Debug, Clone, PartialEq)]

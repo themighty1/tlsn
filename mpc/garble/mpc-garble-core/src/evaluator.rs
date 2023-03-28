@@ -1,8 +1,17 @@
 use cipher::{consts::U16, BlockCipher, BlockEncrypt};
 
-use crate::{circuit::EncryptedGate, label::ActiveInputSet, EncodingError, Error, Label};
-use mpc_circuits::{Circuit, Gate, WireGroup};
+use crate::{
+    circuit::EncryptedGate,
+    label::{state, Delta, EncodedValue, Label, LabelPair},
+};
+use mpc_circuits::{types::TypeError, Circuit, Gate};
 use mpc_core::Block;
+
+#[derive(Debug, thiserror::Error)]
+pub enum EvaluationError {
+    #[error(transparent)]
+    TypeError(#[from] TypeError),
+}
 
 /// Evaluates half-gate garbled AND gate
 #[inline]
@@ -37,54 +46,78 @@ pub(crate) fn xor_gate(x: &Label, y: &Label) -> Label {
     *x ^ *y
 }
 
-/// Evaluates a garbled circuit using [`SanitizedInputLabels`].
+/// Evaluates a garbled circuit.
 pub fn evaluate<C: BlockCipher<BlockSize = U16> + BlockEncrypt>(
     cipher: &C,
     circ: &Circuit,
-    input_labels: ActiveInputSet,
+    inputs: &[EncodedValue<state::Active>],
     encrypted_gates: &[EncryptedGate],
-) -> Result<Vec<Label>, Error> {
-    let mut labels: Vec<Option<Label>> = vec![None; circ.len()];
+) -> Result<Vec<EncodedValue<state::Active>>, EvaluationError> {
+    let mut labels: Vec<Option<Label>> = vec![None; circ.feed_count()];
 
-    // Insert input labels
-    input_labels.iter().for_each(|input_labels| {
-        input_labels
-            .iter()
-            .zip(input_labels.wires())
-            .for_each(|(label, id)| labels[*id] = Some(label))
-    });
+    for (encoded, input) in inputs.iter().zip(circ.inputs()) {
+        if encoded.value_type() != input.value_type() {
+            return Err(TypeError::UnexpectedType {
+                expected: input.value_type(),
+                actual: encoded.value_type(),
+            })?;
+        }
+
+        for (label, node) in encoded.iter().zip(input.iter()) {
+            labels[node.id()] = Some(label.clone());
+        }
+    }
 
     let mut tid = 0;
     let mut gid = 1;
     for gate in circ.gates() {
         match *gate {
-            Gate::Inv { xref, zref, .. } => {
-                let x = labels[xref].ok_or(EncodingError::UninitializedLabel(xref))?;
-                labels[zref] = Some(x);
+            Gate::Inv {
+                x: node_x,
+                z: node_z,
+                ..
+            } => {
+                let x = labels[node_x.id()].expect("feed should be initialized");
+                labels[node_z.id()] = Some(x);
             }
             Gate::Xor {
-                xref, yref, zref, ..
+                x: node_x,
+                y: node_y,
+                z: node_z,
             } => {
-                let x = labels[xref].ok_or(EncodingError::UninitializedLabel(xref))?;
-                let y = labels[yref].ok_or(EncodingError::UninitializedLabel(yref))?;
+                let x = labels[node_x.id()].expect("feed should be initialized");
+                let y = labels[node_y.id()].expect("feed should be initialized");
                 let z = xor_gate(&x, &y);
-                labels[zref] = Some(z);
+                labels[node_z.id()] = Some(z);
             }
             Gate::And {
-                xref, yref, zref, ..
+                x: node_x,
+                y: node_y,
+                z: node_z,
             } => {
-                let x = labels[xref].ok_or(EncodingError::UninitializedLabel(xref))?;
-                let y = labels[yref].ok_or(EncodingError::UninitializedLabel(yref))?;
+                let x = labels[node_x.id()].expect("feed should be initialized");
+                let y = labels[node_y.id()].expect("feed should be initialized");
                 let z = and_gate(cipher, &x, &y, encrypted_gates[tid].as_ref(), gid);
-                labels[zref] = Some(z);
+                labels[node_z.id()] = Some(z);
                 tid += 1;
                 gid += 2;
             }
         };
     }
 
-    Ok(labels
-        .into_iter()
-        .map(|label| label.expect("wire label was not initialized"))
-        .collect())
+    let outputs = circ
+        .outputs()
+        .iter()
+        .map(|output| {
+            let labels: Vec<Label> = output
+                .iter()
+                .map(|node| labels[node.id()].expect("feed should be initialized"))
+                .collect();
+
+            EncodedValue::<state::Active>::from_labels(output.value_type(), &labels)
+                .expect("encoding should be correct")
+        })
+        .collect();
+
+    Ok(outputs)
 }
