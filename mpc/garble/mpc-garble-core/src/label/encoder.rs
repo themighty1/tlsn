@@ -1,11 +1,11 @@
 use std::collections::HashMap;
 
-use mpc_circuits::{BitOrder, ValueType, WireGroup};
+use mpc_circuits::types::BinaryLength;
 use mpc_core::Block;
 use rand::{CryptoRng, RngCore, SeedableRng};
 use rand_chacha::ChaCha20Rng;
 
-use super::{Delta, FullLabels};
+use super::{value::Encode, Delta, Label};
 
 const DELTA_STREAM_ID: u64 = u64::MAX;
 const PADDING_STREAM_ID: u64 = u64::MAX - 1;
@@ -26,30 +26,11 @@ pub trait Encoder: Send + Sync {
     /// Returns encoder's global offset
     fn get_delta(&self) -> Delta;
 
-    /// Returns the encoder's bit order
-    fn get_bit_order(&self) -> BitOrder;
-
     /// Encodes wire group using the provided stream id
     ///
     /// * `stream_id` - Stream id
     /// * `group` - Wire group to encode
-    fn encode<G: WireGroup>(&mut self, stream_id: u32, group: &G) -> FullLabels;
-
-    /// Encodes wire group using the provided stream id, generating the least-significant
-    /// `pad` bits as padding labels.
-    ///
-    /// This is useful for ensuring that a stream of labels is packed when
-    /// a wire group contains padding bits.
-    ///
-    /// Padding labels are generated using a reserved padding stream id to ensure
-    /// they are not used for any other purpose.
-    ///
-    /// Panics if the group length is less than the number of padding labels.
-    ///
-    /// * `stream_id` - Stream id
-    /// * `group` - Wire group to encode
-    /// * `pad` - Number of padding labels to generate
-    fn encode_padded<G: WireGroup>(&mut self, stream_id: u32, group: &G, pad: usize) -> FullLabels;
+    fn encode<T: Encode + BinaryLength>(&mut self, stream_id: u32) -> T::Encoded;
 
     /// Returns a mutable reference to the encoder's rng stream
     ///
@@ -64,7 +45,6 @@ pub struct ChaChaEncoder {
     rng: ChaCha20Rng,
     stream_state: HashMap<u64, u128>,
     delta: Delta,
-    bit_order: BitOrder,
 }
 
 impl ChaChaEncoder {
@@ -72,7 +52,7 @@ impl ChaChaEncoder {
     ///
     /// * `seed` - 32-byte seed for ChaChaRng
     /// * `bit_order` - Bit order of labels generated from stream
-    pub fn new(seed: [u8; 32], bit_order: BitOrder) -> Self {
+    pub fn new(seed: [u8; 32]) -> Self {
         let mut rng = ChaCha20Rng::from_seed(seed);
 
         // Stream id u64::MAX is reserved to generate delta.
@@ -85,7 +65,6 @@ impl ChaChaEncoder {
             rng,
             stream_state: HashMap::default(),
             delta,
-            bit_order,
         }
     }
 
@@ -125,55 +104,15 @@ impl Encoder for ChaChaEncoder {
         self.delta
     }
 
-    fn get_bit_order(&self) -> BitOrder {
-        self.bit_order
-    }
-
-    fn encode<G: WireGroup>(&mut self, stream_id: u32, group: &G) -> FullLabels {
+    fn encode<T: Encode + BinaryLength>(&mut self, stream_id: u32) -> T::Encoded {
         self.set_stream(stream_id as u64);
 
-        let mut blocks = Block::random_vec(&mut self.rng, group.len());
+        let labels = Block::random_vec(&mut self.rng, T::LEN)
+            .into_iter()
+            .map(|block| Label::new(block))
+            .collect::<Vec<_>>();
 
-        // Reverse blocks if bit order is reversed
-        if self.bit_order != group.bit_order() {
-            match group.value_type() {
-                // If value type is bytes, we need to reverse each byte
-                ValueType::Bytes => {
-                    blocks.chunks_exact_mut(8).for_each(|byte| byte.reverse());
-                }
-                _ => blocks.reverse(),
-            }
-        }
-
-        FullLabels::from_blocks(blocks, self.delta)
-    }
-
-    fn encode_padded<G: WireGroup>(&mut self, stream_id: u32, group: &G, pad: usize) -> FullLabels {
-        assert!(group.len() >= pad);
-
-        self.set_stream(stream_id as u64);
-        let msbs = Block::random_vec(&mut self.rng, group.len() - pad);
-
-        self.set_stream(PADDING_STREAM_ID);
-        let lsbs = Block::random_vec(&mut self.rng, pad);
-
-        let mut blocks: Vec<Block> = match self.bit_order {
-            BitOrder::Msb0 => msbs.into_iter().chain(lsbs.into_iter()).collect(),
-            BitOrder::Lsb0 => lsbs.into_iter().chain(msbs.into_iter()).collect(),
-        };
-
-        // Reverse blocks if bit order is reversed
-        if self.bit_order != group.bit_order() {
-            match group.value_type() {
-                // If value type is bytes, we need to reverse each byte
-                ValueType::Bytes => {
-                    blocks.chunks_exact_mut(8).for_each(|byte| byte.reverse());
-                }
-                _ => blocks.reverse(),
-            }
-        }
-
-        FullLabels::from_blocks(blocks, self.delta)
+        T::encode(self.delta, &labels).expect("encoding should not fail")
     }
 
     /// Returns a mutable reference to the encoder's rng stream
@@ -187,178 +126,161 @@ impl Encoder for ChaChaEncoder {
 
 #[cfg(test)]
 mod test {
-    use std::sync::Arc;
-
-    use mpc_circuits::WireGroup;
+    use crate::label::EncodedValue;
 
     use super::*;
-    use rstest::*;
 
-    struct TestGroup {
-        len: usize,
-        bit_order: BitOrder,
-        value_type: ValueType,
-    }
+    #[test]
+    fn test_encoder() {
+        let mut encoder = ChaChaEncoder::new([0u8; 32]);
 
-    impl WireGroup for TestGroup {
-        fn circuit(&self) -> Arc<mpc_circuits::Circuit> {
-            unimplemented!()
-        }
+        let encoded = encoder.encode::<bool>(0);
 
-        fn id(&self) -> &mpc_circuits::GroupId {
-            unimplemented!()
-        }
+        let decoding = encoded.decoding();
+        let commit = encoded.commit();
 
-        fn index(&self) -> usize {
-            unimplemented!()
-        }
+        let active = encoded.select(true);
 
-        fn description(&self) -> &str {
-            unimplemented!()
-        }
+        commit.validate(&active).unwrap();
 
-        fn value_type(&self) -> ValueType {
-            self.value_type
-        }
+        let value = active.decode(&decoding);
 
-        fn bit_order(&self) -> BitOrder {
-            self.bit_order
-        }
-
-        fn wires(&self) -> &[usize] {
-            unimplemented!()
-        }
-
-        fn len(&self) -> usize {
-            self.len
-        }
-    }
-
-    #[rstest]
-    #[case::u8(ValueType::U8, 8)]
-    #[case::u16(ValueType::U16, 16)]
-    #[case::u32(ValueType::U32, 32)]
-    #[case::u64(ValueType::U64, 64)]
-    #[case::u128(ValueType::U128, 128)]
-    #[case::bytes(ValueType::Bytes, 32)]
-    fn test_encoder_bit_order(#[case] value_type: ValueType, #[case] len: usize) {
-        let mut enc = ChaChaEncoder::new([0u8; 32], BitOrder::Msb0);
-
-        let group = TestGroup {
-            len,
-            bit_order: BitOrder::Msb0,
-            value_type,
-        };
-
-        let encoded_0 = enc.encode(0, &group);
-
-        let mut enc = ChaChaEncoder::new([0u8; 32], BitOrder::Lsb0);
-
-        let encoded_1 = enc.encode(0, &group);
-
-        let encoded_0 = encoded_0.iter().collect::<Vec<_>>();
-        let mut encoded_1 = encoded_1.iter().collect::<Vec<_>>();
-
-        match value_type {
-            ValueType::Bytes => {
-                encoded_1
-                    .chunks_exact_mut(8)
-                    .for_each(|byte| byte.reverse());
-            }
-            _ => encoded_1.reverse(),
-        }
-
-        assert_eq!(encoded_0, encoded_1)
-    }
-
-    #[rstest]
-    fn test_encoder_pad_bytes_msb0() {
-        let mut enc = ChaChaEncoder::new([0u8; 32], BitOrder::Msb0);
-
-        let group = TestGroup {
-            len: 64,
-            bit_order: BitOrder::Msb0,
-            value_type: ValueType::Bytes,
-        };
-
-        let encoded_0 = enc.encode_padded(0, &group, 32);
-        let encoded_1 = enc.encode_padded(0, &group, 32);
-
-        let mut enc = ChaChaEncoder::new([0u8; 32], BitOrder::Msb0);
-
-        let group2 = TestGroup {
-            len: 32,
-            bit_order: BitOrder::Msb0,
-            value_type: ValueType::Bytes,
-        };
-
-        let encoded_2 = enc.encode(0, &group2);
-        let encoded_3 = enc.encode(0, &group2);
-
-        let labels_0 = encoded_0.iter().collect::<Vec<_>>();
-        let labels_1 = encoded_1.iter().collect::<Vec<_>>();
-        let labels_2 = encoded_2.iter().collect::<Vec<_>>();
-        let labels_3 = encoded_3.iter().collect::<Vec<_>>();
-
-        assert_eq!(labels_0[..32], labels_2[..]);
-        assert_eq!(labels_1[..32], labels_3[..]);
-    }
-
-    #[rstest]
-    fn test_encoder_pad_bytes_lsb0() {
-        let mut enc = ChaChaEncoder::new([0u8; 32], BitOrder::Lsb0);
-
-        let group = TestGroup {
-            len: 64,
-            bit_order: BitOrder::Lsb0,
-            value_type: ValueType::Bytes,
-        };
-
-        let encoded_0 = enc.encode_padded(0, &group, 32);
-        let encoded_1 = enc.encode_padded(0, &group, 32);
-
-        let mut enc = ChaChaEncoder::new([0u8; 32], BitOrder::Lsb0);
-
-        let group2 = TestGroup {
-            len: 32,
-            bit_order: BitOrder::Lsb0,
-            value_type: ValueType::Bytes,
-        };
-
-        let encoded_2 = enc.encode(0, &group2);
-        let encoded_3 = enc.encode(0, &group2);
-
-        let labels_0 = encoded_0.iter().collect::<Vec<_>>();
-        let labels_1 = encoded_1.iter().collect::<Vec<_>>();
-        let labels_2 = encoded_2.iter().collect::<Vec<_>>();
-        let labels_3 = encoded_3.iter().collect::<Vec<_>>();
-
-        assert_eq!(labels_0[32..], labels_2[..]);
-        assert_eq!(labels_1[32..], labels_3[..]);
-    }
-
-    #[rstest]
-    fn test_encoder_no_duplicates() {
-        let group = TestGroup {
-            len: 64,
-            bit_order: BitOrder::Msb0,
-            value_type: ValueType::Bytes,
-        };
-
-        let mut enc = ChaChaEncoder::new([0u8; 32], BitOrder::Msb0);
-
-        // Pull from stream 0
-        let a = enc.encode(0, &group);
-
-        // Pull from a different stream
-        let c = enc.encode(1, &group);
-
-        // Pull from stream 0 again
-        let b = enc.encode(0, &group);
-
-        // Switching back to the same stream should preserve the word position
-        assert_ne!(a, b);
-        // Different stream ids should produce different labels
-        assert_ne!(a, c);
+        assert_eq!(value, false);
     }
 }
+
+// #[cfg(test)]
+// mod test {
+//     use std::sync::Arc;
+
+//     use super::*;
+//     use rstest::*;
+
+//     #[rstest]
+//     #[case::u8(ValueType::U8, 8)]
+//     #[case::u16(ValueType::U16, 16)]
+//     #[case::u32(ValueType::U32, 32)]
+//     #[case::u64(ValueType::U64, 64)]
+//     #[case::u128(ValueType::U128, 128)]
+//     #[case::bytes(ValueType::Bytes, 32)]
+//     fn test_encoder_bit_order(#[case] value_type: ValueType, #[case] len: usize) {
+//         let mut enc = ChaChaEncoder::new([0u8; 32], BitOrder::Msb0);
+
+//         let group = TestGroup {
+//             len,
+//             bit_order: BitOrder::Msb0,
+//             value_type,
+//         };
+
+//         let encoded_0 = enc.encode(0, &group);
+
+//         let mut enc = ChaChaEncoder::new([0u8; 32], BitOrder::Lsb0);
+
+//         let encoded_1 = enc.encode(0, &group);
+
+//         let encoded_0 = encoded_0.iter().collect::<Vec<_>>();
+//         let mut encoded_1 = encoded_1.iter().collect::<Vec<_>>();
+
+//         match value_type {
+//             ValueType::Bytes => {
+//                 encoded_1
+//                     .chunks_exact_mut(8)
+//                     .for_each(|byte| byte.reverse());
+//             }
+//             _ => encoded_1.reverse(),
+//         }
+
+//         assert_eq!(encoded_0, encoded_1)
+//     }
+
+//     #[rstest]
+//     fn test_encoder_pad_bytes_msb0() {
+//         let mut enc = ChaChaEncoder::new([0u8; 32], BitOrder::Msb0);
+
+//         let group = TestGroup {
+//             len: 64,
+//             bit_order: BitOrder::Msb0,
+//             value_type: ValueType::Bytes,
+//         };
+
+//         let encoded_0 = enc.encode_padded(0, &group, 32);
+//         let encoded_1 = enc.encode_padded(0, &group, 32);
+
+//         let mut enc = ChaChaEncoder::new([0u8; 32], BitOrder::Msb0);
+
+//         let group2 = TestGroup {
+//             len: 32,
+//             bit_order: BitOrder::Msb0,
+//             value_type: ValueType::Bytes,
+//         };
+
+//         let encoded_2 = enc.encode(0, &group2);
+//         let encoded_3 = enc.encode(0, &group2);
+
+//         let labels_0 = encoded_0.iter().collect::<Vec<_>>();
+//         let labels_1 = encoded_1.iter().collect::<Vec<_>>();
+//         let labels_2 = encoded_2.iter().collect::<Vec<_>>();
+//         let labels_3 = encoded_3.iter().collect::<Vec<_>>();
+
+//         assert_eq!(labels_0[..32], labels_2[..]);
+//         assert_eq!(labels_1[..32], labels_3[..]);
+//     }
+
+//     #[rstest]
+//     fn test_encoder_pad_bytes_lsb0() {
+//         let mut enc = ChaChaEncoder::new([0u8; 32], BitOrder::Lsb0);
+
+//         let group = TestGroup {
+//             len: 64,
+//             bit_order: BitOrder::Lsb0,
+//             value_type: ValueType::Bytes,
+//         };
+
+//         let encoded_0 = enc.encode_padded(0, &group, 32);
+//         let encoded_1 = enc.encode_padded(0, &group, 32);
+
+//         let mut enc = ChaChaEncoder::new([0u8; 32], BitOrder::Lsb0);
+
+//         let group2 = TestGroup {
+//             len: 32,
+//             bit_order: BitOrder::Lsb0,
+//             value_type: ValueType::Bytes,
+//         };
+
+//         let encoded_2 = enc.encode(0, &group2);
+//         let encoded_3 = enc.encode(0, &group2);
+
+//         let labels_0 = encoded_0.iter().collect::<Vec<_>>();
+//         let labels_1 = encoded_1.iter().collect::<Vec<_>>();
+//         let labels_2 = encoded_2.iter().collect::<Vec<_>>();
+//         let labels_3 = encoded_3.iter().collect::<Vec<_>>();
+
+//         assert_eq!(labels_0[32..], labels_2[..]);
+//         assert_eq!(labels_1[32..], labels_3[..]);
+//     }
+
+//     #[rstest]
+//     fn test_encoder_no_duplicates() {
+//         let group = TestGroup {
+//             len: 64,
+//             bit_order: BitOrder::Msb0,
+//             value_type: ValueType::Bytes,
+//         };
+
+//         let mut enc = ChaChaEncoder::new([0u8; 32], BitOrder::Msb0);
+
+//         // Pull from stream 0
+//         let a = enc.encode(0, &group);
+
+//         // Pull from a different stream
+//         let c = enc.encode(1, &group);
+
+//         // Pull from stream 0 again
+//         let b = enc.encode(0, &group);
+
+//         // Switching back to the same stream should preserve the word position
+//         assert_ne!(a, b);
+//         // Different stream ids should produce different labels
+//         assert_ne!(a, c);
+//     }
+// }

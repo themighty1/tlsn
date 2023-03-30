@@ -1,7 +1,7 @@
 use rand::{thread_rng, Rng};
-use utils::bits::ToBitsIter;
+use utils::bits::{FromBits, ToBitsIter};
 
-use mpc_circuits::types::{Value, ValueType};
+use mpc_circuits::types::{TypeError, Value, ValueType};
 use mpc_core::{utils::blake3, Block};
 
 use crate::label::{state, Delta, Label, LabelState, Labels};
@@ -9,6 +9,8 @@ use crate::label::{state, Delta, Label, LabelState, Labels};
 /// Error related to encoded values.
 #[derive(Debug, thiserror::Error)]
 pub enum ValueError {
+    #[error(transparent)]
+    TypeError(#[from] mpc_circuits::types::TypeError),
     #[error("invalid encoding length, expected: {expected}, actual: {actual}")]
     InvalidLength { expected: usize, actual: usize },
     #[error("invalid commitment")]
@@ -22,7 +24,9 @@ pub trait Encode: ToBitsIter {
 }
 
 /// An encoded value.
+#[derive(Debug, Clone, PartialEq)]
 pub enum EncodedValue<S: LabelState> {
+    Bit(Bit<S>),
     U8(U8<S>),
     U16(U16<S>),
     U32(U32<S>),
@@ -34,6 +38,7 @@ pub enum EncodedValue<S: LabelState> {
 impl<S: LabelState> EncodedValue<S> {
     pub fn value_type(&self) -> ValueType {
         match self {
+            EncodedValue::Bit(_) => ValueType::Bit,
             EncodedValue::U8(_) => ValueType::U8,
             EncodedValue::U16(_) => ValueType::U16,
             EncodedValue::U32(_) => ValueType::U32,
@@ -45,6 +50,7 @@ impl<S: LabelState> EncodedValue<S> {
 
     pub fn iter(&self) -> Box<dyn Iterator<Item = &Label> + '_> {
         match self {
+            EncodedValue::Bit(v) => Box::new(v.0.iter()),
             EncodedValue::U8(v) => Box::new(v.0.iter()),
             EncodedValue::U16(v) => Box::new(v.0.iter()),
             EncodedValue::U32(v) => Box::new(v.0.iter()),
@@ -98,6 +104,7 @@ impl EncodedValue<state::Full> {
 
     pub fn delta(&self) -> Delta {
         match self {
+            EncodedValue::Bit(v) => v.0.delta(),
             EncodedValue::U8(v) => v.0.delta(),
             EncodedValue::U16(v) => v.0.delta(),
             EncodedValue::U32(v) => v.0.delta(),
@@ -105,6 +112,49 @@ impl EncodedValue<state::Full> {
             EncodedValue::U128(v) => v.0.delta(),
             EncodedValue::Array(v) => v[0].delta(),
         }
+    }
+
+    pub fn select(
+        &self,
+        value: impl Into<Value>,
+    ) -> Result<EncodedValue<state::Active>, ValueError> {
+        let value = value.into();
+
+        let active = match (self, &value) {
+            (EncodedValue::U8(enc_v), Value::U8(v)) => EncodedValue::U8(enc_v.select(*v)),
+            (EncodedValue::U16(enc_v), Value::U16(v)) => EncodedValue::U16(enc_v.select(*v)),
+            (EncodedValue::U32(enc_v), Value::U32(v)) => EncodedValue::U32(enc_v.select(*v)),
+            (EncodedValue::U64(enc_v), Value::U64(v)) => EncodedValue::U64(enc_v.select(*v)),
+            (EncodedValue::U128(enc_v), Value::U128(v)) => EncodedValue::U128(enc_v.select(*v)),
+            (EncodedValue::Array(enc_v), Value::Array(v)) => {
+                if enc_v.len() != v.len() {
+                    return Err(ValueError::InvalidLength {
+                        expected: enc_v.len(),
+                        actual: v.len(),
+                    });
+                }
+
+                EncodedValue::Array(
+                    enc_v
+                        .iter()
+                        .zip(v.iter())
+                        .map(|(enc_v, v)| enc_v.select(v.clone()))
+                        .collect::<Result<Vec<_>, _>>()?,
+                )
+            }
+            _ => {
+                return Err(TypeError::UnexpectedType {
+                    expected: self.value_type(),
+                    actual: value.value_type(),
+                })?;
+            }
+        };
+
+        Ok(active)
+    }
+
+    pub fn decoding(&self) -> DecodingInfo {
+        DecodingInfo::new(self)
     }
 
     pub fn commit(&self) -> EncodingCommitment {
@@ -146,15 +196,52 @@ impl EncodedValue<state::Active> {
 
         Ok(encoded)
     }
+
+    pub fn decode(&self, decoding: &DecodingInfo) -> Result<Value, ValueError> {
+        let value = match (self, decoding) {
+            (EncodedValue::U8(v), DecodingInfo::U8(d)) => v.decode(&d).into(),
+            (EncodedValue::U16(v), DecodingInfo::U16(d)) => v.decode(&d).into(),
+            (EncodedValue::U32(v), DecodingInfo::U32(d)) => v.decode(&d).into(),
+            (EncodedValue::U64(v), DecodingInfo::U64(d)) => v.decode(&d).into(),
+            (EncodedValue::U128(v), DecodingInfo::U128(d)) => v.decode(&d).into(),
+            (EncodedValue::Array(v), DecodingInfo::Array(d)) => Value::Array(
+                v.iter()
+                    .zip(d)
+                    .map(|(v, d)| v.decode(&d))
+                    .collect::<Result<Vec<_>, _>>()?,
+            ),
+            (v, d) => {
+                return Err(TypeError::UnexpectedType {
+                    expected: v.value_type(),
+                    actual: d.value_type(),
+                })?
+            }
+        };
+
+        Ok(value)
+    }
 }
 
 macro_rules! define_encoded_value {
     ($name:ident, $ty:ty, $len:expr) => {
+        #[derive(Debug, Clone, PartialEq)]
         pub struct $name<S: LabelState>(Labels<$len, S>);
 
         impl $name<state::Full> {
             pub(crate) fn new(delta: Delta, labels: [Label; $len]) -> Self {
                 Self(Labels::<$len, state::Full>::new(delta, labels))
+            }
+
+            pub(crate) fn select(&self, value: $ty) -> $name<state::Active> {
+                let mut bits = value.into_lsb0_iter();
+                let delta = self.0.delta();
+                $name::<state::Active>::new(self.0.labels.map(|label| {
+                    if bits.next().unwrap() {
+                        label ^ delta
+                    } else {
+                        label
+                    }
+                }))
             }
         }
 
@@ -180,9 +267,16 @@ macro_rules! define_encoded_value {
                 Ok(Self::Encoded::new(delta, labels))
             }
         }
+
+        impl<S: state::LabelState> From<$name<S>> for EncodedValue<S> {
+            fn from(value: $name<S>) -> Self {
+                EncodedValue::$name(value)
+            }
+        }
     };
 }
 
+define_encoded_value!(Bit, bool, 1);
 define_encoded_value!(U8, u8, 8);
 define_encoded_value!(U16, u16, 16);
 define_encoded_value!(U32, u32, 32);
@@ -190,6 +284,7 @@ define_encoded_value!(U64, u64, 64);
 define_encoded_value!(U128, u128, 128);
 
 pub enum DecodingInfo {
+    Bit(BitDecoding),
     U8(U8Decoding),
     U16(U16Decoding),
     U32(U32Decoding),
@@ -198,19 +293,80 @@ pub enum DecodingInfo {
     Array(Vec<DecodingInfo>),
 }
 
+impl DecodingInfo {
+    pub(crate) fn new(value: &EncodedValue<state::Full>) -> Self {
+        match value {
+            EncodedValue::Bit(v) => DecodingInfo::Bit(v.decoding()),
+            EncodedValue::U8(v) => DecodingInfo::U8(v.decoding()),
+            EncodedValue::U16(v) => DecodingInfo::U16(v.decoding()),
+            EncodedValue::U32(v) => DecodingInfo::U32(v.decoding()),
+            EncodedValue::U64(v) => DecodingInfo::U64(v.decoding()),
+            EncodedValue::U128(v) => DecodingInfo::U128(v.decoding()),
+            EncodedValue::Array(v) => DecodingInfo::Array(v.iter().map(|v| v.decoding()).collect()),
+        }
+    }
+
+    pub fn value_type(&self) -> ValueType {
+        match self {
+            DecodingInfo::Bit(_) => ValueType::Bit,
+            DecodingInfo::U8(_) => ValueType::U8,
+            DecodingInfo::U16(_) => ValueType::U16,
+            DecodingInfo::U32(_) => ValueType::U32,
+            DecodingInfo::U64(_) => ValueType::U64,
+            DecodingInfo::U128(_) => ValueType::U128,
+            DecodingInfo::Array(v) => ValueType::Array(Box::new(v[0].value_type()), v.len()),
+        }
+    }
+}
+
+pub struct BitDecoding(bool);
+
+impl Bit<state::Full> {
+    pub(crate) fn decoding(&self) -> BitDecoding {
+        BitDecoding(self.0[0].pointer_bit())
+    }
+}
+
+impl Bit<state::Active> {
+    pub(crate) fn decode(&self, decoding: &BitDecoding) -> bool {
+        self.0[0].pointer_bit() ^ decoding.0
+    }
+}
+
 macro_rules! define_decoding_info {
-    ($name:ident, $ty:ty) => {
+    ($name:ident, $value:ident, $ty:ty) => {
         pub struct $name($ty);
+
+        impl $value<state::Full> {
+            pub(crate) fn decoding(&self) -> $name {
+                $name(<$ty>::from_lsb0(
+                    self.0.iter().map(|label| label.pointer_bit()),
+                ))
+            }
+        }
+
+        impl $value<state::Active> {
+            pub(crate) fn decode(&self, decoding: &$name) -> $ty {
+                <$ty>::from_lsb0(
+                    self.0
+                        .iter()
+                        .zip(decoding.0.into_lsb0_iter())
+                        .map(|(label, dec)| label.pointer_bit() ^ dec),
+                )
+                .into()
+            }
+        }
     };
 }
 
-define_decoding_info!(U8Decoding, u8);
-define_decoding_info!(U16Decoding, u16);
-define_decoding_info!(U32Decoding, u32);
-define_decoding_info!(U64Decoding, u64);
-define_decoding_info!(U128Decoding, u128);
+define_decoding_info!(U8Decoding, U8, u8);
+define_decoding_info!(U16Decoding, U16, u16);
+define_decoding_info!(U32Decoding, U32, u32);
+define_decoding_info!(U64Decoding, U64, u64);
+define_decoding_info!(U128Decoding, U128, u128);
 
 pub enum EncodingCommitment {
+    Bit(BitCommitment),
     U8(U8Commitment),
     U16(U16Commitment),
     U32(U32Commitment),
@@ -222,6 +378,7 @@ pub enum EncodingCommitment {
 impl EncodingCommitment {
     pub(crate) fn new(value: &EncodedValue<state::Full>) -> EncodingCommitment {
         match value {
+            EncodedValue::Bit(v) => EncodingCommitment::Bit(BitCommitment::new(v)),
             EncodedValue::U8(v) => EncodingCommitment::U8(U8Commitment::new(v)),
             EncodedValue::U16(v) => EncodingCommitment::U16(U16Commitment::new(v)),
             EncodedValue::U32(v) => EncodingCommitment::U32(U32Commitment::new(v)),
@@ -239,6 +396,12 @@ impl EncodingCommitment {
 macro_rules! define_encoding_commitment {
     ($name:ident, $value_ident:ident, $len:expr) => {
         pub struct $name([[Block; 2]; $len]);
+
+        impl $value_ident<state::Full> {
+            pub(crate) fn commit(&self) -> $name {
+                $name::new(self)
+            }
+        }
 
         impl $name {
             pub(crate) fn new(value: &$value_ident<state::Full>) -> Self {
@@ -296,6 +459,7 @@ macro_rules! define_encoding_commitment {
     };
 }
 
+define_encoding_commitment!(BitCommitment, Bit, 1);
 define_encoding_commitment!(U8Commitment, U8, 8);
 define_encoding_commitment!(U16Commitment, U16, 16);
 define_encoding_commitment!(U32Commitment, U32, 32);

@@ -104,6 +104,9 @@ pub fn garble<C: BlockCipher<BlockSize = U16> + BlockEncrypt>(
                 y: node_y,
                 z: node_z,
             } => {
+                if node_x.id() == 0 {
+                    let z_0 = low_labels[node_y.id()].expect("feed should be initialized");
+                }
                 let x_0 = low_labels[node_x.id()].expect("feed should be initialized");
                 let y_0 = low_labels[node_y.id()].expect("feed should be initialized");
                 let (z_0, t) = and_gate(cipher, &x_0, &y_0, &delta, gid);

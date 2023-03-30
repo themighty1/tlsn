@@ -2,8 +2,8 @@
 
 mod digest;
 //pub(crate) mod encoded;
+mod encoder;
 mod value;
-//mod encoder;
 //pub(crate) mod input;
 //pub(crate) mod output;
 
