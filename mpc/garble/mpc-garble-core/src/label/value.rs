@@ -273,6 +273,12 @@ macro_rules! define_encoded_value {
                 EncodedValue::$name(value)
             }
         }
+
+        impl<S: state::LabelState, const N: usize> From<[$name<S>; N]> for EncodedValue<S> {
+            fn from(value: [$name<S>; N]) -> Self {
+                EncodedValue::Array(value.map(|v| v.into()).to_vec())
+            }
+        }
     };
 }
 

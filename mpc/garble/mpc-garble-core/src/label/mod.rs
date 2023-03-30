@@ -74,7 +74,7 @@ pub mod state {
     }
 
     /// Marker trait for label state
-    pub trait LabelState: sealed::Sealed {}
+    pub trait LabelState: sealed::Sealed + Clone {}
 
     /// Full label state, ie contains both the low and high labels.
     #[derive(Debug, Clone, Copy, PartialEq)]

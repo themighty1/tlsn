@@ -461,7 +461,7 @@ impl Display for ValueType {
 }
 
 /// A value that can be encoded into a binary representation.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 #[allow(missing_docs)]
 pub enum Value {

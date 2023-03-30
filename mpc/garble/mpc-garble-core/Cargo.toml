@@ -8,7 +8,7 @@ name = "mpc_garble_core"
 
 [dependencies]
 tlsn-mpc-core.workspace = true
-tlsn-mpc-circuits2.workspace = true
+tlsn-mpc-circuits.workspace = true
 tlsn-utils.workspace = true
 
 aes = { workspace = true, features = [] }

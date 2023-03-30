@@ -14,7 +14,6 @@ members = [
 # tlsn
 tlsn-mpc-core = { path = "mpc-core" }
 tlsn-mpc-circuits = { path = "mpc-circuits" }
-tlsn-mpc-circuits2 = { path = "mpc-circuits2" }
 tlsn-mpc-ot-core = { path = "ot/mpc-ot-core" }
 tlsn-mpc-ot = { path = "ot/mpc-ot" }
 tlsn-mpc-garble-core = { path = "garble/mpc-garble-core" }

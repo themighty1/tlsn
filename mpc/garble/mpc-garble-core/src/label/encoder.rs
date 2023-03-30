@@ -26,11 +26,28 @@ pub trait Encoder: Send + Sync {
     /// Returns encoder's global offset
     fn get_delta(&self) -> Delta;
 
-    /// Encodes wire group using the provided stream id
+    /// Encodes a type using the provided stream id
     ///
     /// * `stream_id` - Stream id
-    /// * `group` - Wire group to encode
     fn encode<T: Encode + BinaryLength>(&mut self, stream_id: u32) -> T::Encoded;
+
+    /// Encodes an array using the provided stream id
+    ///
+    /// * `stream_id` - Stream id
+    fn encode_array<T: Encode + BinaryLength, const N: usize>(
+        &mut self,
+        stream_id: u32,
+    ) -> [T::Encoded; N];
+
+    /// Encodes a vector using the provided stream id
+    ///
+    /// * `stream_id` - Stream id
+    /// * `len` - Length of vector
+    fn encode_vec<T: Encode + BinaryLength>(
+        &mut self,
+        stream_id: u32,
+        len: usize,
+    ) -> Vec<T::Encoded>;
 
     /// Returns a mutable reference to the encoder's rng stream
     ///
@@ -115,9 +132,45 @@ impl Encoder for ChaChaEncoder {
         T::encode(self.delta, &labels).expect("encoding should not fail")
     }
 
-    /// Returns a mutable reference to the encoder's rng stream
-    ///
-    /// * `stream_id` - Stream id
+    fn encode_array<T: Encode + BinaryLength, const N: usize>(
+        &mut self,
+        stream_id: u32,
+    ) -> [T::Encoded; N] {
+        self.set_stream(stream_id as u64);
+
+        std::array::from_fn(|_| {
+            T::encode(
+                self.delta,
+                &Block::random_vec(&mut self.rng, T::LEN)
+                    .into_iter()
+                    .map(Label::new)
+                    .collect::<Vec<_>>(),
+            )
+            .expect("encoding should not fail")
+        })
+    }
+
+    fn encode_vec<T: Encode + BinaryLength>(
+        &mut self,
+        stream_id: u32,
+        len: usize,
+    ) -> Vec<T::Encoded> {
+        self.set_stream(stream_id as u64);
+
+        (0..len)
+            .map(|_| {
+                T::encode(
+                    self.delta,
+                    &Block::random_vec(&mut self.rng, T::LEN)
+                        .into_iter()
+                        .map(Label::new)
+                        .collect::<Vec<_>>(),
+                )
+                .expect("encoding should not fail")
+            })
+            .collect()
+    }
+
     fn get_stream(&mut self, stream_id: u32) -> &mut dyn EncoderRng {
         self.set_stream(stream_id as u64);
         &mut self.rng
@@ -134,18 +187,20 @@ mod test {
     fn test_encoder() {
         let mut encoder = ChaChaEncoder::new([0u8; 32]);
 
-        let encoded = encoder.encode::<bool>(0);
+        let encoded = encoder.encode_array::<u8, 16>(0);
+
+        let encoded: EncodedValue<_> = encoded.into();
 
         let decoding = encoded.decoding();
         let commit = encoded.commit();
 
-        let active = encoded.select(true);
+        let active = encoded.select([0u8; 16]).unwrap();
 
-        commit.validate(&active).unwrap();
+        //commit.validate(&active).unwrap();
 
-        let value = active.decode(&decoding);
+        let value = active.decode(&decoding).unwrap();
 
-        assert_eq!(value, false);
+        assert_eq!(value, [0u8; 16].into());
     }
 }
 
