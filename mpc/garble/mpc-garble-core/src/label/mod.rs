@@ -12,17 +12,13 @@ use std::{
     sync::Arc,
 };
 
-//use mpc_circuits::{BitOrder, Input, Output, Value};
-use mpc_circuits::types::Value;
 use mpc_core::Block;
 use rand::{CryptoRng, Rng};
 
-use crate::error::EncodingError;
-
 pub use digest::LabelsDigest;
-pub use value::EncodedValue;
+pub use value::{DecodingInfo, EncodedValue, EncodingCommitment, ValueError};
 //pub use encoded::{Encoded, GroupDecodingInfo};
-//pub use encoder::{ChaChaEncoder, Encoder, EncoderRng};
+pub use encoder::{ChaChaEncoder, Encoder, EncoderRng};
 //pub use output::OutputLabelsCommitment;
 
 /// Global binary offset used by the Free-XOR technique to create wire label
@@ -127,6 +123,12 @@ impl<const N: usize> Labels<N, state::Full> {
 
     pub(crate) fn delta(&self) -> Delta {
         self.state.delta
+    }
+
+    pub(crate) fn iter_blocks(&self) -> impl Iterator<Item = [Block; 2]> + '_ {
+        self.labels
+            .iter()
+            .map(|label| [label.0, label.0 ^ *self.delta()])
     }
 }
 
@@ -242,75 +244,6 @@ impl Label {
     #[inline]
     pub fn random<R: Rng + CryptoRng + ?Sized>(rng: &mut R) -> Self {
         Self(Block::random(rng))
-    }
-
-    /// Creates label pair from delta and corresponding truth value
-    #[inline]
-    pub fn to_pair(self, delta: Delta, level: bool) -> LabelPair {
-        let (low, high) = if level {
-            (self ^ delta, self)
-        } else {
-            (self, self ^ delta)
-        };
-
-        LabelPair(low, high)
-    }
-}
-
-/// Pair of garbled circuit labels
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct LabelPair(Label, Label);
-
-impl LabelPair {
-    /// Creates a new label pair
-    #[inline]
-    pub(crate) fn new(low: Label, high: Label) -> Self {
-        Self(low, high)
-    }
-
-    /// Returns delta
-    #[inline]
-    pub fn delta(&self) -> Delta {
-        Delta((self.0 ^ self.1).0)
-    }
-
-    /// Returns both labels
-    #[inline]
-    pub fn to_inner(self) -> [Label; 2] {
-        [self.0, self.1]
-    }
-
-    /// Returns label corresponding to logical low
-    #[inline]
-    pub fn low(&self) -> Label {
-        self.0
-    }
-
-    /// Returns label corresponding to logical high
-    #[inline]
-    pub fn high(&self) -> Label {
-        self.1
-    }
-
-    /// Returns label corresponding to provided logic level
-    #[inline]
-    pub fn select(&self, level: bool) -> Label {
-        if level {
-            self.1
-        } else {
-            self.0
-        }
-    }
-
-    /// Returns labels corresponding to wire truth values
-    ///
-    /// Panics if wire is not in label collection
-    pub fn choose(labels: &[LabelPair], wires: &[usize], values: &[bool]) -> Vec<Label> {
-        wires
-            .iter()
-            .zip(values.iter())
-            .map(|(id, value)| labels[*id].select(*value))
-            .collect()
     }
 }
 

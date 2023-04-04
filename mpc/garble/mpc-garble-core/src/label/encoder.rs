@@ -1,11 +1,11 @@
 use std::collections::HashMap;
 
-use mpc_circuits::types::BinaryLength;
+use mpc_circuits::types::{BinaryLength, ValueType};
 use mpc_core::Block;
 use rand::{CryptoRng, RngCore, SeedableRng};
 use rand_chacha::ChaCha20Rng;
 
-use super::{value::Encode, Delta, Label};
+use super::{state, value::Encode, Delta, EncodedValue, Label};
 
 const DELTA_STREAM_ID: u64 = u64::MAX;
 const PADDING_STREAM_ID: u64 = u64::MAX - 1;
@@ -31,6 +31,12 @@ pub trait Encoder: Send + Sync {
     /// * `stream_id` - Stream id
     fn encode<T: Encode + BinaryLength>(&mut self, stream_id: u32) -> T::Encoded;
 
+    /// Encodes a type using the provided stream id
+    ///
+    /// * `stream_id` - Stream id
+    /// * `ty` - Type of value
+    fn encode_by_type(&mut self, stream_id: u32, ty: ValueType) -> EncodedValue<state::Full>;
+
     /// Encodes an array using the provided stream id
     ///
     /// * `stream_id` - Stream id
@@ -43,10 +49,12 @@ pub trait Encoder: Send + Sync {
     ///
     /// * `stream_id` - Stream id
     /// * `len` - Length of vector
+    /// * `pad` - Number of padding values to generate
     fn encode_vec<T: Encode + BinaryLength>(
         &mut self,
         stream_id: u32,
         len: usize,
+        pad: usize,
     ) -> Vec<T::Encoded>;
 
     /// Returns a mutable reference to the encoder's rng stream
@@ -132,6 +140,23 @@ impl Encoder for ChaChaEncoder {
         T::encode(self.delta, &labels).expect("encoding should not fail")
     }
 
+    fn encode_by_type(&mut self, stream_id: u32, ty: ValueType) -> EncodedValue<state::Full> {
+        match ty {
+            ValueType::Bit => self.encode::<bool>(stream_id).into(),
+            ValueType::U8 => self.encode::<u8>(stream_id).into(),
+            ValueType::U16 => self.encode::<u16>(stream_id).into(),
+            ValueType::U32 => self.encode::<u32>(stream_id).into(),
+            ValueType::U64 => self.encode::<u64>(stream_id).into(),
+            ValueType::U128 => self.encode::<u128>(stream_id).into(),
+            ValueType::Array(ty, len) => EncodedValue::Array(
+                (0..len)
+                    .map(|_| self.encode_by_type(stream_id, *ty.clone()))
+                    .collect(),
+            ),
+            _ => unimplemented!("encoding of type {:?} is not implemented", ty),
+        }
+    }
+
     fn encode_array<T: Encode + BinaryLength, const N: usize>(
         &mut self,
         stream_id: u32,
@@ -154,10 +179,11 @@ impl Encoder for ChaChaEncoder {
         &mut self,
         stream_id: u32,
         len: usize,
+        pad: usize,
     ) -> Vec<T::Encoded> {
         self.set_stream(stream_id as u64);
 
-        (0..len)
+        let left = (0..len)
             .map(|_| {
                 T::encode(
                     self.delta,
@@ -168,7 +194,24 @@ impl Encoder for ChaChaEncoder {
                 )
                 .expect("encoding should not fail")
             })
-            .collect()
+            .collect::<Vec<_>>();
+
+        self.set_stream(PADDING_STREAM_ID);
+
+        let right = (0..pad)
+            .map(|_| {
+                T::encode(
+                    self.delta,
+                    &Block::random_vec(&mut self.rng, T::LEN)
+                        .into_iter()
+                        .map(Label::new)
+                        .collect::<Vec<_>>(),
+                )
+                .expect("encoding should not fail")
+            })
+            .collect::<Vec<_>>();
+
+        left.into_iter().chain(right).collect()
     }
 
     fn get_stream(&mut self, stream_id: u32) -> &mut dyn EncoderRng {
@@ -179,28 +222,64 @@ impl Encoder for ChaChaEncoder {
 
 #[cfg(test)]
 mod test {
-    use crate::label::EncodedValue;
+    use crate::label::{state, EncodedValue};
+    use mpc_circuits::types::Value;
+    use std::marker::PhantomData;
 
     use super::*;
+    use rstest::*;
 
-    #[test]
-    fn test_encoder() {
+    #[rstest]
+    #[case::bit(PhantomData::<bool>)]
+    #[case::u8(PhantomData::<u8>)]
+    #[case::u16(PhantomData::<u16>)]
+    #[case::u32(PhantomData::<u32>)]
+    #[case::u64(PhantomData::<u64>)]
+    #[case::u128(PhantomData::<u128>)]
+    fn test_encoder<T: Encode + BinaryLength + Default>(#[case] _pd: PhantomData<T>)
+    where
+        T: Into<Value>,
+        T::Encoded: Into<EncodedValue<state::Full>>,
+    {
         let mut encoder = ChaChaEncoder::new([0u8; 32]);
 
-        let encoded = encoder.encode_array::<u8, 16>(0);
-
-        let encoded: EncodedValue<_> = encoded.into();
-
+        let encoded: EncodedValue<_> = encoder.encode::<T>(0).into();
         let decoding = encoded.decoding();
         let commit = encoded.commit();
-
-        let active = encoded.select([0u8; 16]).unwrap();
-
-        //commit.validate(&active).unwrap();
-
+        let active = encoded.select(T::default()).unwrap();
+        commit.verify(&active).unwrap();
         let value = active.decode(&decoding).unwrap();
 
-        assert_eq!(value, [0u8; 16].into());
+        assert_eq!(value, T::default().into());
+    }
+
+    #[rstest]
+    #[case::bit(PhantomData::<bool>)]
+    #[case::u8(PhantomData::<u8>)]
+    #[case::u16(PhantomData::<u16>)]
+    #[case::u32(PhantomData::<u32>)]
+    #[case::u64(PhantomData::<u64>)]
+    #[case::u128(PhantomData::<u128>)]
+    fn test_encoder_array<T: Encode + BinaryLength + Default>(#[case] _pd: PhantomData<T>)
+    where
+        [T; 16]: Into<Value>,
+        [T::Encoded; 16]: Into<EncodedValue<state::Full>>,
+    {
+        let mut encoder = ChaChaEncoder::new([0u8; 32]);
+
+        let encoded: EncodedValue<_> = encoder.encode_array::<T, 16>(0).into();
+        let decoding = encoded.decoding();
+        let commit = encoded.commit();
+        let active = encoded
+            .select(std::array::from_fn::<_, 16, _>(|_| T::default()))
+            .unwrap();
+        commit.verify(&active).unwrap();
+        let value = active.decode(&decoding).unwrap();
+
+        assert_eq!(
+            value,
+            std::array::from_fn::<_, 16, _>(|_| T::default()).into()
+        );
     }
 }
 

@@ -9,10 +9,11 @@ use crate::{
         unchecked::{UncheckedGarbledCircuit, UncheckedOutput},
         GarbledCircuit,
     },
+    generator::GarbleError,
     label::{ActiveInputSet, FullInputSet},
     Error,
 };
-use mpc_circuits::{Circuit, OutputValue};
+use mpc_circuits::{types::Value, Circuit};
 
 use aes::{Aes128, NewBlockCipher};
 use std::sync::Arc;
@@ -84,7 +85,7 @@ impl SemiHonestLeader<Generator> {
         self,
         input_labels: FullInputSet,
         reveal_output: bool,
-    ) -> Result<(GarbledCircuit<gc_state::Partial>, SemiHonestLeader<Decode>), Error> {
+    ) -> Result<(GarbledCircuit<gc_state::Partial>, SemiHonestLeader<Decode>), GarbleError> {
         let cipher = Aes128::new_from_slice(&[0u8; 16]).unwrap();
         let gc = GarbledCircuit::generate(&cipher, self.state.circ.clone(), input_labels)?;
 
@@ -96,9 +97,9 @@ impl SemiHonestLeader<Generator> {
         self,
         gc: GarbledCircuit<gc_state::Full>,
         reveal_output: bool,
-    ) -> Result<(GarbledCircuit<gc_state::Partial>, SemiHonestLeader<Decode>), Error> {
+    ) -> Result<(GarbledCircuit<gc_state::Partial>, SemiHonestLeader<Decode>), GarbleError> {
         Ok((
-            gc.get_partial(reveal_output, true)?,
+            gc.get_partial(reveal_output, true),
             SemiHonestLeader {
                 state: Decode {
                     gc: gc.into_summary(),

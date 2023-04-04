@@ -75,6 +75,9 @@ impl EncodedValue<state::Full> {
         }
 
         let encoded = match value_type {
+            ValueType::Bit => {
+                EncodedValue::Bit(Bit::<state::Full>::new(delta, labels.try_into().unwrap()))
+            }
             ValueType::U8 => {
                 EncodedValue::U8(U8::<state::Full>::new(delta, labels.try_into().unwrap()))
             }
@@ -121,6 +124,7 @@ impl EncodedValue<state::Full> {
         let value = value.into();
 
         let active = match (self, &value) {
+            (EncodedValue::Bit(enc_v), Value::Bit(v)) => EncodedValue::Bit(enc_v.select(*v)),
             (EncodedValue::U8(enc_v), Value::U8(v)) => EncodedValue::U8(enc_v.select(*v)),
             (EncodedValue::U16(enc_v), Value::U16(v)) => EncodedValue::U16(enc_v.select(*v)),
             (EncodedValue::U32(enc_v), Value::U32(v)) => EncodedValue::U32(enc_v.select(*v)),
@@ -160,6 +164,18 @@ impl EncodedValue<state::Full> {
     pub fn commit(&self) -> EncodingCommitment {
         EncodingCommitment::new(self)
     }
+
+    pub fn iter_blocks(&self) -> Box<dyn Iterator<Item = [Block; 2]> + Send + '_> {
+        match self {
+            EncodedValue::Bit(v) => Box::new(v.0.iter_blocks()),
+            EncodedValue::U8(v) => Box::new(v.0.iter_blocks()),
+            EncodedValue::U16(v) => Box::new(v.0.iter_blocks()),
+            EncodedValue::U32(v) => Box::new(v.0.iter_blocks()),
+            EncodedValue::U64(v) => Box::new(v.0.iter_blocks()),
+            EncodedValue::U128(v) => Box::new(v.0.iter_blocks()),
+            EncodedValue::Array(v) => Box::new(v.iter().flat_map(|v| v.iter_blocks())),
+        }
+    }
 }
 
 impl EncodedValue<state::Active> {
@@ -172,6 +188,9 @@ impl EncodedValue<state::Active> {
         }
 
         let encoded = match value_type {
+            ValueType::Bit => {
+                EncodedValue::Bit(Bit::<state::Active>::new(labels.try_into().unwrap()))
+            }
             ValueType::U8 => EncodedValue::U8(U8::<state::Active>::new(labels.try_into().unwrap())),
             ValueType::U16 => {
                 EncodedValue::U16(U16::<state::Active>::new(labels.try_into().unwrap()))
@@ -199,6 +218,7 @@ impl EncodedValue<state::Active> {
 
     pub fn decode(&self, decoding: &DecodingInfo) -> Result<Value, ValueError> {
         let value = match (self, decoding) {
+            (EncodedValue::Bit(v), DecodingInfo::Bit(d)) => v.decode(&d).into(),
             (EncodedValue::U8(v), DecodingInfo::U8(d)) => v.decode(&d).into(),
             (EncodedValue::U16(v), DecodingInfo::U16(d)) => v.decode(&d).into(),
             (EncodedValue::U32(v), DecodingInfo::U32(d)) => v.decode(&d).into(),
@@ -242,6 +262,10 @@ macro_rules! define_encoded_value {
                         label
                     }
                 }))
+            }
+
+            pub fn iter_block(&self) -> impl Iterator<Item = [Block; 2]> + '_ {
+                self.0.iter_blocks()
             }
         }
 
@@ -289,6 +313,7 @@ define_encoded_value!(U32, u32, 32);
 define_encoded_value!(U64, u64, 64);
 define_encoded_value!(U128, u128, 128);
 
+#[derive(Debug, Clone, PartialEq)]
 pub enum DecodingInfo {
     Bit(BitDecoding),
     U8(U8Decoding),
@@ -325,6 +350,7 @@ impl DecodingInfo {
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
 pub struct BitDecoding(bool);
 
 impl Bit<state::Full> {
@@ -341,6 +367,7 @@ impl Bit<state::Active> {
 
 macro_rules! define_decoding_info {
     ($name:ident, $value:ident, $ty:ty) => {
+        #[derive(Debug, Clone, PartialEq)]
         pub struct $name($ty);
 
         impl $value<state::Full> {
@@ -371,6 +398,7 @@ define_decoding_info!(U32Decoding, U32, u32);
 define_decoding_info!(U64Decoding, U64, u64);
 define_decoding_info!(U128Decoding, U128, u128);
 
+#[derive(Debug, Clone, PartialEq)]
 pub enum EncodingCommitment {
     Bit(BitCommitment),
     U8(U8Commitment),
@@ -397,10 +425,45 @@ impl EncodingCommitment {
             ),
         }
     }
+
+    pub fn value_type(&self) -> ValueType {
+        match self {
+            EncodingCommitment::Bit(_) => ValueType::Bit,
+            EncodingCommitment::U8(_) => ValueType::U8,
+            EncodingCommitment::U16(_) => ValueType::U16,
+            EncodingCommitment::U32(_) => ValueType::U32,
+            EncodingCommitment::U64(_) => ValueType::U64,
+            EncodingCommitment::U128(_) => ValueType::U128,
+            EncodingCommitment::Array(v) => ValueType::Array(Box::new(v[0].value_type()), v.len()),
+        }
+    }
+
+    pub fn verify(&self, active: &EncodedValue<state::Active>) -> Result<(), ValueError> {
+        match (self, active) {
+            (EncodingCommitment::Bit(c), EncodedValue::Bit(a)) => c.verify(a),
+            (EncodingCommitment::U8(c), EncodedValue::U8(a)) => c.verify(a),
+            (EncodingCommitment::U16(c), EncodedValue::U16(a)) => c.verify(a),
+            (EncodingCommitment::U32(c), EncodedValue::U32(a)) => c.verify(a),
+            (EncodingCommitment::U64(c), EncodedValue::U64(a)) => c.verify(a),
+            (EncodingCommitment::U128(c), EncodedValue::U128(a)) => c.verify(a),
+            (EncodingCommitment::Array(c), EncodedValue::Array(a)) if c.len() == a.len() => {
+                for (c, a) in c.iter().zip(a.iter()) {
+                    c.verify(a)?;
+                }
+
+                Ok(())
+            }
+            _ => Err(TypeError::UnexpectedType {
+                expected: self.value_type(),
+                actual: active.value_type(),
+            })?,
+        }
+    }
 }
 
 macro_rules! define_encoding_commitment {
     ($name:ident, $value_ident:ident, $len:expr) => {
+        #[derive(Debug, Clone, PartialEq)]
         pub struct $name([[Block; 2]; $len]);
 
         impl $value_ident<state::Full> {
@@ -438,7 +501,7 @@ macro_rules! define_encoding_commitment {
             /// Validates labels against commitments
             ///
             /// If this function returns an error the generator may be malicious
-            pub(crate) fn validate(
+            pub(crate) fn verify(
                 &self,
                 value: &$value_ident<state::Active>,
             ) -> Result<(), ValueError> {
@@ -453,10 +516,13 @@ macro_rules! define_encoding_commitment {
             }
 
             /// We use a truncated Blake3 hash to commit to the labels
-            ///
-            /// TODO: determine whether a salt is necessary
             fn compute_hash(block: Block) -> Block {
-                let h = blake3(&block.to_be_bytes());
+                let salt = b"label commitment";
+                let mut bytes = [0u8; 32];
+                bytes[..16].copy_from_slice(block.to_be_bytes().as_slice());
+                bytes[16..].copy_from_slice(salt);
+
+                let h = blake3(&bytes);
                 let mut commitment = [0u8; 16];
                 commitment.copy_from_slice(&h[..16]);
                 commitment.into()

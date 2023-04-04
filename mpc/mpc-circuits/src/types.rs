@@ -489,6 +489,35 @@ impl Value {
     }
 }
 
+impl ToBitsIter for Value {
+    type Lsb0Iter = Box<dyn Iterator<Item = bool> + Send + 'static>;
+    type Msb0Iter = Box<dyn Iterator<Item = bool> + Send + 'static>;
+
+    fn into_lsb0_iter(self) -> Self::Lsb0Iter {
+        match self {
+            Value::Bit(v) => Box::new(std::iter::once(v)),
+            Value::U8(v) => Box::new(v.into_lsb0_iter()),
+            Value::U16(v) => Box::new(v.into_lsb0_iter()),
+            Value::U32(v) => Box::new(v.into_lsb0_iter()),
+            Value::U64(v) => Box::new(v.into_lsb0_iter()),
+            Value::U128(v) => Box::new(v.into_lsb0_iter()),
+            Value::Array(v) => Box::new(v.into_iter().flat_map(|v| v.into_lsb0_iter())),
+        }
+    }
+
+    fn into_msb0_iter(self) -> Self::Msb0Iter {
+        match self {
+            Value::Bit(v) => Box::new(std::iter::once(v)),
+            Value::U8(v) => Box::new(v.into_msb0_iter()),
+            Value::U16(v) => Box::new(v.into_msb0_iter()),
+            Value::U32(v) => Box::new(v.into_msb0_iter()),
+            Value::U64(v) => Box::new(v.into_msb0_iter()),
+            Value::U128(v) => Box::new(v.into_msb0_iter()),
+            Value::Array(v) => Box::new(v.into_iter().flat_map(|v| v.into_msb0_iter())),
+        }
+    }
+}
+
 impl ToBits for Value {
     fn into_lsb0(self) -> Vec<bool> {
         match self {

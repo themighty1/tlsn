@@ -6,6 +6,9 @@ edition = "2021"
 [lib]
 name = "mpc_garble_core"
 
+[profile.release]
+lto = true
+
 [dependencies]
 tlsn-mpc-core.workspace = true
 tlsn-mpc-circuits.workspace = true

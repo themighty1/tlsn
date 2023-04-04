@@ -1,0 +1,18 @@
+[package]
+name = "tlsn-actor-garble"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "actor_garble"
+
+[dependencies]
+tlsn-mpc-circuits = { path = "../../mpc/mpc-circuits" }
+tlsn-mpc-garble = { path = "../../mpc/garble/mpc-garble" }
+tlsn-mpc-garble-core = { path = "../../mpc/garble/mpc-garble-core" }
+tlsn-utils-aio = { path = "../../utils/utils-aio" }
+
+xtra = "0.5.2"
+
+[dev-dependencies]
+tokio = "1"

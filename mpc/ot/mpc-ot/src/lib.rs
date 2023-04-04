@@ -4,13 +4,14 @@ pub mod mock;
 
 use async_trait::async_trait;
 use futures::channel::oneshot::Canceled;
-use mpc_circuits::{InputValue, WireGroup};
+use mpc_circuits::types::Value;
 use mpc_core::Block;
-use mpc_garble_core::{ActiveEncodedInput, ActiveLabels, FullEncodedInput};
+use mpc_garble_core::{label_state, EncodedValue, Label};
 use mpc_ot_core::{
     msgs::{OTFactoryMessage, OTMessage},
     CommittedOTError, ExtReceiverCoreError, ExtSenderCoreError, ReceiverCoreError, SenderCoreError,
 };
+use utils::bits::ToBitsIter;
 use utils_aio::{mux::MuxerError, Channel};
 
 pub use mpc_ot_core::config;
@@ -27,6 +28,8 @@ pub enum OTError {
     ExtSenderCoreError(#[from] ExtSenderCoreError),
     #[error("OT receiver core error: {0}")]
     ExtReceiverCoreError(#[from] ExtReceiverCoreError),
+    #[error(transparent)]
+    ValueError(#[from] mpc_garble_core::ValueError),
     #[error("IO error")]
     IOError(#[from] std::io::Error),
     #[error("CommittedOT Error: {0}")]
@@ -90,16 +93,15 @@ pub trait ObliviousVerify<T> {
 }
 
 #[async_trait]
-impl<T> ObliviousSend<FullEncodedInput> for T
+impl<T> ObliviousSend<EncodedValue<label_state::Full>> for T
 where
     T: Send + ObliviousSend<[Block; 2]>,
 {
-    async fn send(&mut self, inputs: Vec<FullEncodedInput>) -> Result<(), OTError> {
+    async fn send(&mut self, inputs: Vec<EncodedValue<label_state::Full>>) -> Result<(), OTError> {
         self.send(
             inputs
-                .into_iter()
-                .map(|labels| labels.iter_blocks().collect::<Vec<[Block; 2]>>())
-                .flatten()
+                .iter()
+                .flat_map(|value| value.iter_blocks())
                 .collect::<Vec<[Block; 2]>>(),
         )
         .await
@@ -107,47 +109,46 @@ where
 }
 
 #[async_trait]
-impl<T> ObliviousReceive<InputValue, ActiveEncodedInput> for T
+impl<T> ObliviousReceive<Value, EncodedValue<label_state::Active>> for T
 where
     T: Send + ObliviousReceive<bool, Block>,
 {
     async fn receive(
         &mut self,
-        choices: Vec<InputValue>,
-    ) -> Result<Vec<ActiveEncodedInput>, OTError> {
-        let choice_bits = choices
+        choices: Vec<Value>,
+    ) -> Result<Vec<EncodedValue<label_state::Active>>, OTError> {
+        let types = choices
             .iter()
-            .map(|value| value.value().to_bits(value.bit_order()))
-            .flatten()
+            .map(|value| value.value_type())
+            .collect::<Vec<_>>();
+        let choice_bits = choices
+            .into_iter()
+            .flat_map(|value| value.into_lsb0_iter())
             .collect::<Vec<bool>>();
 
         let mut blocks = self.receive(choice_bits).await?;
 
-        Ok(choices
+        Ok(types
             .into_iter()
-            .map(|value| {
-                let labels = ActiveLabels::from_blocks(blocks.drain(..value.len()).collect());
-                ActiveEncodedInput::from_active_labels(value.group().clone(), labels)
-                    .expect("Input labels should be valid")
+            .map(|typ| {
+                let labels = blocks
+                    .drain(..typ.len())
+                    .map(|block| Label::new(block))
+                    .collect::<Vec<_>>();
+                EncodedValue::<label_state::Active>::from_labels(typ, &labels)
             })
-            .collect())
+            .collect::<Result<Vec<_>, _>>()?)
     }
 }
 
 #[async_trait]
-impl<T> ObliviousVerify<FullEncodedInput> for T
+impl<T> ObliviousVerify<EncodedValue<label_state::Full>> for T
 where
     T: Send + ObliviousVerify<[Block; 2]>,
 {
-    async fn verify(self, input: Vec<FullEncodedInput>) -> Result<(), OTError> {
-        self.verify(
-            input
-                .into_iter()
-                .map(|labels| labels.iter_blocks().collect::<Vec<[Block; 2]>>())
-                .flatten()
-                .collect(),
-        )
-        .await
+    async fn verify(self, input: Vec<EncodedValue<label_state::Full>>) -> Result<(), OTError> {
+        self.verify(input.iter().flat_map(|value| value.iter_blocks()).collect())
+            .await
     }
 }
 
@@ -155,24 +156,28 @@ where
 mod tests {
     use super::*;
     use crate::mock::mock_ot_pair;
-    use mpc_circuits::ADDER_64;
-    use mpc_garble_core::FullInputSet;
-    use rand::thread_rng;
+    use mpc_circuits::circuits::AES128;
+    use mpc_garble_core::{ChaChaEncoder, Encoder};
 
     #[tokio::test]
-    async fn test_wire_label_transfer() {
-        let circ = ADDER_64.clone();
-        let full_labels = FullInputSet::generate(&mut thread_rng(), &circ, None);
-
-        let receiver_labels = full_labels[1].clone();
-
-        let value = circ.input(1).unwrap().to_value(4u64).unwrap();
-        let expected = receiver_labels.select(value.value()).unwrap();
-
+    async fn test_encoded_value_transfer() {
         let (mut sender, mut receiver) = mock_ot_pair::<Block>();
-        sender.send(vec![receiver_labels]).await.unwrap();
-        let received = receiver.receive(vec![value]).await.unwrap();
+        let mut encoder = ChaChaEncoder::new([0u8; 32]);
+        let encoded_values = AES128
+            .inputs()
+            .iter()
+            .map(|value| encoder.encode_by_type(0, value.value_type()))
+            .collect::<Vec<_>>();
 
-        assert_eq!(received[0], expected);
+        let encoded_value = encoded_values[0].clone();
+        let decoding = encoded_value.decoding();
+        sender.send(vec![encoded_value]).await.unwrap();
+
+        let value: Value = [69u8; 16].into();
+        let received = receiver.receive(vec![value.clone()]).await.unwrap();
+
+        let received_value = received[0].decode(&decoding).unwrap();
+
+        assert_eq!(received_value, value);
     }
 }
