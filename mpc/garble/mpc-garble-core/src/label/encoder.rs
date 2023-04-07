@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use mpc_circuits::types::{BinaryLength, ValueType};
 use mpc_core::Block;
-use rand::{CryptoRng, RngCore, SeedableRng};
+use rand::{thread_rng, CryptoRng, Rng, RngCore, SeedableRng};
 use rand_chacha::ChaCha20Rng;
 
 use super::{state, value::Encode, Delta, EncodedValue, Label};
@@ -29,20 +29,20 @@ pub trait Encoder: Send + Sync {
     /// Encodes a type using the provided stream id
     ///
     /// * `stream_id` - Stream id
-    fn encode<T: Encode + BinaryLength>(&mut self, stream_id: u32) -> T::Encoded;
+    fn encode<T: Encode + BinaryLength>(&mut self, stream_id: u64) -> T::Encoded;
 
     /// Encodes a type using the provided stream id
     ///
     /// * `stream_id` - Stream id
     /// * `ty` - Type of value
-    fn encode_by_type(&mut self, stream_id: u32, ty: ValueType) -> EncodedValue<state::Full>;
+    fn encode_by_type(&mut self, stream_id: u64, ty: ValueType) -> EncodedValue<state::Full>;
 
     /// Encodes an array using the provided stream id
     ///
     /// * `stream_id` - Stream id
     fn encode_array<T: Encode + BinaryLength, const N: usize>(
         &mut self,
-        stream_id: u32,
+        stream_id: u64,
     ) -> [T::Encoded; N];
 
     /// Encodes a vector using the provided stream id
@@ -52,7 +52,7 @@ pub trait Encoder: Send + Sync {
     /// * `pad` - Number of padding values to generate
     fn encode_vec<T: Encode + BinaryLength>(
         &mut self,
-        stream_id: u32,
+        stream_id: u64,
         len: usize,
         pad: usize,
     ) -> Vec<T::Encoded>;
@@ -60,7 +60,7 @@ pub trait Encoder: Send + Sync {
     /// Returns a mutable reference to the encoder's rng stream
     ///
     /// * `stream_id` - Stream id
-    fn get_stream(&mut self, stream_id: u32) -> &mut dyn EncoderRng;
+    fn get_stream(&mut self, stream_id: u64) -> &mut dyn EncoderRng;
 }
 
 /// Encodes wires into labels using the ChaCha algorithm.
@@ -70,6 +70,12 @@ pub struct ChaChaEncoder {
     rng: ChaCha20Rng,
     stream_state: HashMap<u64, u128>,
     delta: Delta,
+}
+
+impl Default for ChaChaEncoder {
+    fn default() -> Self {
+        Self::new(thread_rng().gen())
+    }
 }
 
 impl ChaChaEncoder {
@@ -98,6 +104,8 @@ impl ChaChaEncoder {
     ///
     /// * `id` - Stream id
     fn set_stream(&mut self, id: u64) {
+        assert_ne!(id, DELTA_STREAM_ID, "stream id is reserved");
+
         let current_id = self.rng.get_stream();
 
         // noop if stream already set
@@ -129,8 +137,8 @@ impl Encoder for ChaChaEncoder {
         self.delta
     }
 
-    fn encode<T: Encode + BinaryLength>(&mut self, stream_id: u32) -> T::Encoded {
-        self.set_stream(stream_id as u64);
+    fn encode<T: Encode + BinaryLength>(&mut self, stream_id: u64) -> T::Encoded {
+        self.set_stream(stream_id);
 
         let labels = Block::random_vec(&mut self.rng, T::LEN)
             .into_iter()
@@ -140,12 +148,12 @@ impl Encoder for ChaChaEncoder {
         T::encode(self.delta, &labels).expect("encoding should not fail")
     }
 
-    fn encode_by_type(&mut self, stream_id: u32, ty: ValueType) -> EncodedValue<state::Full> {
+    fn encode_by_type(&mut self, stream_id: u64, ty: ValueType) -> EncodedValue<state::Full> {
         match ty {
             ValueType::Bit => self.encode::<bool>(stream_id).into(),
             ValueType::U8 => self.encode::<u8>(stream_id).into(),
             ValueType::U16 => self.encode::<u16>(stream_id).into(),
-            ValueType::U32 => self.encode::<u32>(stream_id).into(),
+            ValueType::U32 => self.encode::<u64>(stream_id).into(),
             ValueType::U64 => self.encode::<u64>(stream_id).into(),
             ValueType::U128 => self.encode::<u128>(stream_id).into(),
             ValueType::Array(ty, len) => EncodedValue::Array(
@@ -159,7 +167,7 @@ impl Encoder for ChaChaEncoder {
 
     fn encode_array<T: Encode + BinaryLength, const N: usize>(
         &mut self,
-        stream_id: u32,
+        stream_id: u64,
     ) -> [T::Encoded; N] {
         self.set_stream(stream_id as u64);
 
@@ -177,7 +185,7 @@ impl Encoder for ChaChaEncoder {
 
     fn encode_vec<T: Encode + BinaryLength>(
         &mut self,
-        stream_id: u32,
+        stream_id: u64,
         len: usize,
         pad: usize,
     ) -> Vec<T::Encoded> {
@@ -214,7 +222,7 @@ impl Encoder for ChaChaEncoder {
         left.into_iter().chain(right).collect()
     }
 
-    fn get_stream(&mut self, stream_id: u32) -> &mut dyn EncoderRng {
+    fn get_stream(&mut self, stream_id: u64) -> &mut dyn EncoderRng {
         self.set_stream(stream_id as u64);
         &mut self.rng
     }
@@ -233,7 +241,7 @@ mod test {
     #[case::bit(PhantomData::<bool>)]
     #[case::u8(PhantomData::<u8>)]
     #[case::u16(PhantomData::<u16>)]
-    #[case::u32(PhantomData::<u32>)]
+    #[case::u64(PhantomData::<u64>)]
     #[case::u64(PhantomData::<u64>)]
     #[case::u128(PhantomData::<u128>)]
     fn test_encoder<T: Encode + BinaryLength + Default>(#[case] _pd: PhantomData<T>)
@@ -257,7 +265,7 @@ mod test {
     #[case::bit(PhantomData::<bool>)]
     #[case::u8(PhantomData::<u8>)]
     #[case::u16(PhantomData::<u16>)]
-    #[case::u32(PhantomData::<u32>)]
+    #[case::u64(PhantomData::<u64>)]
     #[case::u64(PhantomData::<u64>)]
     #[case::u128(PhantomData::<u128>)]
     fn test_encoder_array<T: Encode + BinaryLength + Default>(#[case] _pd: PhantomData<T>)
@@ -293,7 +301,7 @@ mod test {
 //     #[rstest]
 //     #[case::u8(ValueType::U8, 8)]
 //     #[case::u16(ValueType::U16, 16)]
-//     #[case::u32(ValueType::U32, 32)]
+//     #[case::u64(ValueType::U32, 32)]
 //     #[case::u64(ValueType::U64, 64)]
 //     #[case::u128(ValueType::U128, 128)]
 //     #[case::bytes(ValueType::Bytes, 32)]

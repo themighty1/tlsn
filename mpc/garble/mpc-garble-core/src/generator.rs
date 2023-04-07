@@ -1,10 +1,11 @@
 use aes::{Aes128, NewBlockCipher};
+use blake3::Hasher;
 use cipher::{consts::U16, BlockCipher, BlockEncrypt};
 
 use crate::{
     circuit::EncryptedGate,
     label::{state, Delta, EncodedValue, Label},
-    CIPHER_FIXED_KEY,
+    GarbledCircuitDigest, CIPHER_FIXED_KEY,
 };
 use mpc_circuits::{types::TypeError, Circuit, CircuitError, Gate};
 use mpc_core::Block;
@@ -63,6 +64,7 @@ pub struct Generator<'a> {
     low_labels: Vec<Option<Label>>,
     gid: usize,
     complete: bool,
+    hasher: Option<Hasher>,
 }
 
 impl<'a> Generator<'a> {
@@ -70,6 +72,7 @@ impl<'a> Generator<'a> {
         circ: &'a Circuit,
         delta: Delta,
         inputs: &[EncodedValue<state::Full>],
+        digest: bool,
     ) -> Result<Self, GeneratorError> {
         if inputs.len() != circ.inputs().len() {
             return Err(CircuitError::InvalidInputCount(
@@ -100,6 +103,7 @@ impl<'a> Generator<'a> {
             low_labels,
             gid: 1,
             complete: false,
+            hasher: if digest { Some(Hasher::new()) } else { None },
         })
     }
 
@@ -126,6 +130,13 @@ impl<'a> Generator<'a> {
                     .expect("encoding should be correct")
             })
             .collect())
+    }
+
+    /// Returns the digest of the encrypted gates.
+    pub fn digest(&self) -> Option<GarbledCircuitDigest> {
+        self.hasher
+            .as_ref()
+            .map(|hasher| GarbledCircuitDigest(hasher.finalize().into()))
     }
 }
 
@@ -165,6 +176,10 @@ impl<'a> Iterator for Generator<'a> {
                     low_labels[node_z.id()] = Some(z_0);
                     self.gid += 2;
 
+                    if let Some(hasher) = &mut self.hasher {
+                        hasher.update(&encrypted_gate.to_be_bytes());
+                    }
+
                     return Some(encrypted_gate);
                 }
             }
@@ -192,7 +207,7 @@ mod tests {
             .map(|input| encoder.encode_by_type(0, input.value_type()))
             .collect();
 
-        let mut gen = Generator::new(&AES128, encoder.get_delta(), &inputs).unwrap();
+        let mut gen = Generator::new(&AES128, encoder.get_delta(), &inputs, true).unwrap();
 
         let mut enc_gates = Vec::with_capacity(AES128.and_count());
         while let Some(gate) = gen.next() {
@@ -200,5 +215,6 @@ mod tests {
         }
 
         let _ = gen.outputs().unwrap();
+        let _ = gen.digest().unwrap();
     }
 }

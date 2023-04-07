@@ -1,10 +1,8 @@
-#[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
 use crate::commit;
 
-#[derive(Debug, Clone)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HashCommitment(pub [u8; 32]);
 
 impl From<commit::HashCommitment> for HashCommitment {
@@ -19,8 +17,7 @@ impl From<HashCommitment> for commit::HashCommitment {
     }
 }
 
-#[derive(Debug, Clone)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CommitmentKey(pub [u8; 32]);
 
 impl From<commit::CommitmentKey> for CommitmentKey {
@@ -35,27 +32,32 @@ impl From<CommitmentKey> for commit::CommitmentKey {
     }
 }
 
-#[derive(Debug, Clone)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-pub struct CommitmentOpening {
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommitmentOpening<T> {
     pub key: CommitmentKey,
-    pub message: Vec<u8>,
+    pub data: T,
 }
 
-impl From<commit::Opening> for CommitmentOpening {
-    fn from(c: commit::Opening) -> Self {
+impl<T> From<commit::Opening<T>> for CommitmentOpening<T>
+where
+    T: serde::Serialize,
+{
+    fn from(opening: commit::Opening<T>) -> Self {
         Self {
-            key: c.key.into(),
-            message: c.message,
+            key: opening.key.into(),
+            data: opening.data,
         }
     }
 }
 
-impl From<CommitmentOpening> for commit::Opening {
-    fn from(c: CommitmentOpening) -> Self {
+impl<T> From<CommitmentOpening<T>> for commit::Opening<T>
+where
+    T: serde::Serialize,
+{
+    fn from(opening: CommitmentOpening<T>) -> Self {
         Self {
-            key: c.key.into(),
-            message: c.message,
+            key: opening.key.into(),
+            data: opening.data,
         }
     }
 }

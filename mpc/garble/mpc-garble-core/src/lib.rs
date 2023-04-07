@@ -14,13 +14,13 @@ mod session;
 //pub mod msgs;
 pub mod msg;
 
-pub use circuit::{GarbledCircuit, GarbledCircuitDigest};
+pub use circuit::{EncryptedGate, GarbledCircuitDigest};
 pub use error::{EncodingError, Error};
 pub use evaluator::{Evaluator, EvaluatorError};
 pub use generator::{Generator, GeneratorError};
 pub use label::{
     state as label_state, ChaChaEncoder, DecodingInfo, Delta, EncodedValue, Encoder,
-    EncodingCommitment, Label, ValueError,
+    EncodingCommitment, EqualityCheck, Label, ValueError,
 };
 
 pub(crate) static CIPHER_FIXED_KEY: [u8; 16] = [69u8; 16];
@@ -95,8 +95,8 @@ mod tests {
             full_inputs[1].clone().select(msg).unwrap(),
         ];
 
-        let mut gen = Generator::new(&AES128, encoder.get_delta(), &full_inputs).unwrap();
-        let mut ev = Evaluator::new(&AES128, &active_inputs, false).unwrap();
+        let mut gen = Generator::new(&AES128, encoder.get_delta(), &full_inputs, true).unwrap();
+        let mut ev = Evaluator::new(&AES128, &active_inputs, true).unwrap();
 
         while !(gen.is_complete() && ev.is_complete()) {
             let mut batch = Vec::with_capacity(BATCH_SIZE);
@@ -106,11 +106,16 @@ mod tests {
                     break;
                 }
             }
-            ev.evaluate(batch);
+            ev.evaluate(batch.iter());
         }
 
         let full_outputs = gen.outputs().unwrap();
         let active_outputs = ev.outputs().unwrap();
+
+        let gen_digest = gen.digest().unwrap();
+        let ev_digest = ev.digest().unwrap();
+
+        assert_eq!(gen_digest, ev_digest);
 
         let outputs: Vec<Value> = active_outputs
             .iter()

@@ -34,6 +34,12 @@ pub trait ToBinaryRepr: ToBitsIter + Into<Value> {
     fn new_bin_repr(nodes: &[Node<Feed>]) -> Result<Self::Repr, TypeError>;
 }
 
+/// A type to which the value type can be statically determined.
+pub trait StaticValueType {
+    /// The value type of the type.
+    fn value_type() -> ValueType;
+}
+
 /// A type that has a constant bit length.
 pub trait BinaryLength {
     /// The length of the type in bits.
@@ -406,6 +412,16 @@ pub enum ValueType {
 }
 
 impl ValueType {
+    /// Creates a new value type.
+    pub fn new<T: StaticValueType>() -> Self {
+        T::value_type()
+    }
+
+    /// Creates a new array value type.
+    pub fn new_array<T: StaticValueType>(len: usize) -> Self {
+        ValueType::Array(Box::new(T::value_type()), len)
+    }
+
     /// Returns the length of the value type in bits.
     #[allow(clippy::len_without_is_empty)]
     pub fn len(&self) -> usize {
@@ -459,6 +475,29 @@ impl Display for ValueType {
         }
     }
 }
+
+macro_rules! impl_value_type {
+    ($ty:ty, $ident:ident) => {
+        impl StaticValueType for $ty {
+            fn value_type() -> ValueType {
+                ValueType::$ident
+            }
+        }
+
+        impl<const N: usize> StaticValueType for [$ty; N] {
+            fn value_type() -> ValueType {
+                ValueType::Array(Box::new(ValueType::$ident), N)
+            }
+        }
+    };
+}
+
+impl_value_type!(bool, Bit);
+impl_value_type!(u8, U8);
+impl_value_type!(u16, U16);
+impl_value_type!(u32, U32);
+impl_value_type!(u64, U64);
+impl_value_type!(u128, U128);
 
 /// A value that can be encoded into a binary representation.
 #[derive(Debug, Clone, PartialEq)]

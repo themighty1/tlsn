@@ -1,17 +1,25 @@
-use std::{ops::Index, sync::Arc};
+use std::ops::Index;
 
-use cipher::{consts::U16, BlockCipher, BlockEncrypt};
 use mpc_circuits::Circuit;
-use mpc_core::{utils::blake3, Block};
+use mpc_core::Block;
+use serde::{Deserialize, Serialize};
 
-use crate::{generator::GeneratorError, label_state, EncodedValue};
+use crate::{label_state, Delta, EncodedValue, Generator, GeneratorError};
+
+#[derive(Debug, thiserror::Error)]
+pub enum GarbledCircuitError {
+    #[error(transparent)]
+    GeneratorError(#[from] GeneratorError),
+    #[error("invalid garbled circuit digest")]
+    InvalidDigest,
+}
 
 /// Encrypted gate truth table
 ///
 /// For the half-gate garbling scheme a truth table will typically have 2 rows, except for in
 /// privacy-free garbling mode where it will be reduced to 1
-#[derive(Debug, Clone, PartialEq)]
-pub struct EncryptedGate(pub(crate) [Block; 2]);
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EncryptedGate(#[serde(with = "serde_arrays")] pub(crate) [Block; 2]);
 
 impl EncryptedGate {
     pub(crate) fn new(inner: [Block; 2]) -> Self {
@@ -38,28 +46,31 @@ impl Index<usize> for EncryptedGate {
 #[derive(Debug, Clone, PartialEq)]
 pub struct GarbledCircuitDigest(pub(crate) [u8; 32]);
 
-#[derive(Debug, Clone)]
-pub struct GarbledCircuit {
-    circ: Arc<Circuit>,
-    gates: Vec<EncryptedGate>,
+impl GarbledCircuitDigest {
+    /// Verifies that the given circuit and inputs produce the same digest as this one
+    pub fn verify(
+        &self,
+        circ: &Circuit,
+        delta: Delta,
+        inputs: &[EncodedValue<label_state::Full>],
+    ) -> Result<(), GarbledCircuitError> {
+        let mut gen = Generator::new(circ, delta, &inputs, true)?;
+        // drain the generator, dropping the gates
+        while let Some(_) = gen.next() {}
+        let digest = gen.digest().expect("digest should be available");
+
+        if digest.0 == self.0 {
+            Ok(())
+        } else {
+            Err(GarbledCircuitError::InvalidDigest)
+        }
+    }
 }
 
-// impl GarbledCircuit {
-//     pub fn generate<C: BlockCipher<BlockSize = U16> + BlockEncrypt>(
-//         cipher: &C,
-//         circ: Arc<Circuit>,
-//         inputs: &[EncodedValue<label_state::Full>],
-//     ) -> Result<(Self, Vec<EncodedValue<label_state::Full>>), GarbleError> {
-//         let (outputs, gates) = garble(cipher, &circ, inputs[0].delta(), inputs)?;
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-//         Ok((Self { circ, gates }, outputs))
-//     }
-
-//     pub fn circuit(&self) -> &Circuit {
-//         &self.circ
-//     }
-
-//     pub fn gates(&self) -> &[EncryptedGate] {
-//         &self.gates
-//     }
-// }
+    #[test]
+    fn test_gc_digest() {}
+}

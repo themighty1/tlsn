@@ -1,4 +1,5 @@
 use rand::{thread_rng, Rng};
+use serde::{Deserialize, Serialize};
 use utils::bits::{FromBits, ToBitsIter};
 
 use mpc_circuits::types::{TypeError, Value, ValueType};
@@ -13,6 +14,8 @@ pub enum ValueError {
     TypeError(#[from] mpc_circuits::types::TypeError),
     #[error("invalid encoding length, expected: {expected}, actual: {actual}")]
     InvalidLength { expected: usize, actual: usize },
+    #[error("invalid active encoding")]
+    InvalidActiveEncoding,
     #[error("invalid commitment")]
     InvalidCommitment,
 }
@@ -165,6 +168,29 @@ impl EncodedValue<state::Full> {
         EncodingCommitment::new(self)
     }
 
+    pub fn verify(&self, active: &EncodedValue<state::Active>) -> Result<(), ValueError> {
+        match (self, active) {
+            (EncodedValue::Bit(full), EncodedValue::Bit(active)) => full.verify(active),
+            (EncodedValue::U8(full), EncodedValue::U8(active)) => full.verify(active),
+            (EncodedValue::U16(full), EncodedValue::U16(active)) => full.verify(active),
+            (EncodedValue::U32(full), EncodedValue::U32(active)) => full.verify(active),
+            (EncodedValue::U64(full), EncodedValue::U64(active)) => full.verify(active),
+            (EncodedValue::U128(full), EncodedValue::U128(active)) => full.verify(active),
+            (EncodedValue::Array(full), EncodedValue::Array(active))
+                if full.len() == active.len() =>
+            {
+                full.iter()
+                    .zip(active.iter())
+                    .map(|(full, active)| full.verify(active))
+                    .collect::<Result<(), _>>()
+            }
+            _ => Err(TypeError::UnexpectedType {
+                expected: self.value_type(),
+                actual: active.value_type(),
+            })?,
+        }
+    }
+
     pub fn iter_blocks(&self) -> Box<dyn Iterator<Item = [Block; 2]> + Send + '_> {
         match self {
             EncodedValue::Bit(v) => Box::new(v.0.iter_blocks()),
@@ -240,6 +266,55 @@ impl EncodedValue<state::Active> {
 
         Ok(value)
     }
+
+    /// Recovers the full encoding of a value using the decoding and delta.
+    pub fn recover(&self, decoding: &DecodingInfo, delta: Delta) -> EncodedValue<state::Full> {
+        match (self, decoding) {
+            (EncodedValue::Bit(v), DecodingInfo::Bit(d)) => EncodedValue::Bit(v.recover(&d, delta)),
+            (EncodedValue::U8(v), DecodingInfo::U8(d)) => EncodedValue::U8(v.recover(&d, delta)),
+            (EncodedValue::U16(v), DecodingInfo::U16(d)) => EncodedValue::U16(v.recover(&d, delta)),
+            (EncodedValue::U32(v), DecodingInfo::U32(d)) => EncodedValue::U32(v.recover(&d, delta)),
+            (EncodedValue::U64(v), DecodingInfo::U64(d)) => EncodedValue::U64(v.recover(&d, delta)),
+            (EncodedValue::U128(v), DecodingInfo::U128(d)) => {
+                EncodedValue::U128(v.recover(&d, delta))
+            }
+            (EncodedValue::Array(v), DecodingInfo::Array(d)) => {
+                EncodedValue::Array(v.iter().zip(d).map(|(v, d)| v.recover(&d, delta)).collect())
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    /// Recovers the full encoding of a value using the known plaintext value and delta.
+    pub fn recover_from_value(&self, value: &Value, delta: Delta) -> EncodedValue<state::Full> {
+        match (self, value) {
+            (EncodedValue::Bit(v), Value::Bit(b)) => {
+                EncodedValue::Bit(v.recover_from_value(*b, delta))
+            }
+            (EncodedValue::U8(v), Value::U8(b)) => {
+                EncodedValue::U8(v.recover_from_value(*b, delta))
+            }
+            (EncodedValue::U16(v), Value::U16(b)) => {
+                EncodedValue::U16(v.recover_from_value(*b, delta))
+            }
+            (EncodedValue::U32(v), Value::U32(b)) => {
+                EncodedValue::U32(v.recover_from_value(*b, delta))
+            }
+            (EncodedValue::U64(v), Value::U64(b)) => {
+                EncodedValue::U64(v.recover_from_value(*b, delta))
+            }
+            (EncodedValue::U128(v), Value::U128(b)) => {
+                EncodedValue::U128(v.recover_from_value(*b, delta))
+            }
+            (EncodedValue::Array(v), Value::Array(b)) => EncodedValue::Array(
+                v.iter()
+                    .zip(b)
+                    .map(|(v, b)| v.recover_from_value(b, delta))
+                    .collect(),
+            ),
+            _ => unreachable!(),
+        }
+    }
 }
 
 macro_rules! define_encoded_value {
@@ -262,6 +337,10 @@ macro_rules! define_encoded_value {
                         label
                     }
                 }))
+            }
+
+            pub(crate) fn verify(&self, active: &$name<state::Active>) -> Result<(), ValueError> {
+                self.0.verify(&active.0)
             }
 
             pub fn iter_block(&self) -> impl Iterator<Item = [Block; 2]> + '_ {
@@ -313,7 +392,7 @@ define_encoded_value!(U32, u32, 32);
 define_encoded_value!(U64, u64, 64);
 define_encoded_value!(U128, u128, 128);
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum DecodingInfo {
     Bit(BitDecoding),
     U8(U8Decoding),
@@ -350,7 +429,7 @@ impl DecodingInfo {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BitDecoding(bool);
 
 impl Bit<state::Full> {
@@ -360,6 +439,28 @@ impl Bit<state::Full> {
 }
 
 impl Bit<state::Active> {
+    pub(crate) fn recover(&self, decoding: &BitDecoding, delta: Delta) -> Bit<state::Full> {
+        Bit::<state::Full>::new(
+            delta,
+            self.0.labels.map(|label| {
+                if label.pointer_bit() ^ decoding.0 {
+                    label ^ delta
+                } else {
+                    label
+                }
+            }),
+        )
+    }
+
+    pub(crate) fn recover_from_value(&self, value: bool, delta: Delta) -> Bit<state::Full> {
+        Bit::<state::Full>::new(
+            delta,
+            self.0
+                .labels
+                .map(|label| if value { label ^ delta } else { label }),
+        )
+    }
+
     pub(crate) fn decode(&self, decoding: &BitDecoding) -> bool {
         self.0[0].pointer_bit() ^ decoding.0
     }
@@ -367,7 +468,7 @@ impl Bit<state::Active> {
 
 macro_rules! define_decoding_info {
     ($name:ident, $value:ident, $ty:ty) => {
-        #[derive(Debug, Clone, PartialEq)]
+        #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
         pub struct $name($ty);
 
         impl $value<state::Full> {
@@ -379,6 +480,38 @@ macro_rules! define_decoding_info {
         }
 
         impl $value<state::Active> {
+            pub(crate) fn recover(&self, decoding: &$name, delta: Delta) -> $value<state::Full> {
+                let mut decoding = decoding.0.into_lsb0_iter();
+                $value::<state::Full>::new(
+                    delta,
+                    self.0.labels.map(|label| {
+                        if label.pointer_bit() ^ decoding.next().unwrap() {
+                            label ^ delta
+                        } else {
+                            label
+                        }
+                    }),
+                )
+            }
+
+            pub(crate) fn recover_from_value(
+                &self,
+                value: $ty,
+                delta: Delta,
+            ) -> $value<state::Full> {
+                let mut value = value.into_lsb0_iter();
+                $value::<state::Full>::new(
+                    delta,
+                    self.0.labels.map(|label| {
+                        if value.next().unwrap() {
+                            label ^ delta
+                        } else {
+                            label
+                        }
+                    }),
+                )
+            }
+
             pub(crate) fn decode(&self, decoding: &$name) -> $ty {
                 <$ty>::from_lsb0(
                     self.0
@@ -537,3 +670,25 @@ define_encoding_commitment!(U16Commitment, U16, 16);
 define_encoding_commitment!(U32Commitment, U32, 32);
 define_encoding_commitment!(U64Commitment, U64, 64);
 define_encoding_commitment!(U128Commitment, U128, 128);
+
+#[cfg(test)]
+mod tests {
+    use crate::{ChaChaEncoder, Encoder};
+
+    use super::*;
+
+    #[test]
+    fn test_recover() {
+        let mut encoder = ChaChaEncoder::new([0u8; 32]);
+        let delta = encoder.get_delta();
+
+        let full = encoder.encode::<u8>(0);
+        let decoding = full.decoding();
+        let active = full.select(42u8);
+        let recovered = active.recover(&decoding, delta);
+        assert_eq!(full, recovered);
+
+        let recovered = active.recover_from_value(42u8, delta);
+        assert_eq!(full, recovered);
+    }
+}

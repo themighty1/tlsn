@@ -99,8 +99,8 @@ impl<'a> Evaluator<'a> {
 
     /// Evaluates the next batch of encrypted gates.
     #[inline]
-    pub fn evaluate(&mut self, encrypted_gates: impl IntoIterator<Item = EncryptedGate>) {
-        let mut encrypted_gates = encrypted_gates.into_iter().peekable();
+    pub fn evaluate<'b>(&mut self, encrypted_gates: impl Iterator<Item = &'b EncryptedGate>) {
+        let mut encrypted_gates = encrypted_gates.peekable();
         let labels = &mut self.active_labels;
 
         // Process gates until we run out of encrypted gates
@@ -135,7 +135,7 @@ impl<'a> Evaluator<'a> {
 
                     let x = labels[node_x.id()].expect("feed should be initialized");
                     let y = labels[node_y.id()].expect("feed should be initialized");
-                    let z = and_gate(&self.cipher, &x, &y, &encrypted_gate, self.gid);
+                    let z = and_gate(&self.cipher, &x, &y, encrypted_gate, self.gid);
                     labels[node_z.id()] = Some(z);
                     self.gid += 2;
                 }

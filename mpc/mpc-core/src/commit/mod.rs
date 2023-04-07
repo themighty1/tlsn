@@ -1,16 +1,93 @@
 //! Commitment protocols
 
 use rand::{thread_rng, Rng};
-
-use crate::utils::blake3;
+use serde::{Deserialize, Serialize};
 
 /// Error associated with commitments
 #[derive(Debug, thiserror::Error)]
 pub enum CommitmentError {
     #[error("Invalid commitment opening")]
-    InvalidOpening,
-    #[error("Message does not match commitment")]
-    InvalidMessage,
+    InvalidCommitment,
+    #[error(transparent)]
+    SerializationError(#[from] bincode::Error),
+}
+
+/// A trait for committing to arbitrary data which implements `serde::Serialize`
+pub trait Commit
+where
+    Self: serde::Serialize + Sized,
+{
+    /// Creates a hash commitment to self
+    fn commit(self) -> Result<(Opening<Self>, HashCommitment), CommitmentError> {
+        let opening = Opening::new(self);
+
+        let mut bytes = opening.key.0.to_vec();
+        bytes.extend(bincode::serialize(&opening.data)?);
+
+        let commit = HashCommitment::new(&bytes);
+
+        Ok((opening, commit))
+    }
+}
+
+impl<T> Commit for T where T: serde::Serialize {}
+
+/// Opening information for a commitment
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Opening<T>
+where
+    T: Serialize,
+{
+    pub(crate) key: CommitmentKey,
+    pub(crate) data: T,
+}
+
+impl<T> Opening<T>
+where
+    T: Serialize,
+{
+    /// Creates a new commitment opening
+    pub fn new(data: T) -> Self {
+        Self {
+            key: CommitmentKey::random(),
+            data,
+        }
+    }
+
+    /// Creates a commitment
+    pub fn commit(&self) -> Result<HashCommitment, CommitmentError> {
+        let mut bytes = self.key.0.to_vec();
+        bytes.extend(bincode::serialize(&self.data)?);
+
+        Ok(HashCommitment::new(&bytes))
+    }
+
+    /// Verifies that the provided commitment corresponds to this
+    /// opening
+    pub fn verify(&self, commitment: &HashCommitment) -> Result<(), CommitmentError> {
+        let expected = self.commit()?;
+
+        if commitment == &expected {
+            Ok(())
+        } else {
+            Err(CommitmentError::InvalidCommitment)
+        }
+    }
+
+    /// Returns the commitment key
+    pub fn key(&self) -> &CommitmentKey {
+        &self.key
+    }
+
+    /// Returns the data
+    pub fn data(&self) -> &T {
+        &self.data
+    }
+
+    /// Returns the data
+    pub fn to_inner(self) -> T {
+        self.data
+    }
 }
 
 /// A commitment of the form H(key || message) using Blake3
@@ -18,60 +95,21 @@ pub enum CommitmentError {
 pub struct HashCommitment(pub(crate) [u8; 32]);
 
 impl HashCommitment {
-    /// Verifies an opening against this commitment
-    pub fn verify(&self, opening: &Opening) -> Result<(), CommitmentError> {
-        if self.0 != opening.commit().0 {
-            return Err(CommitmentError::InvalidOpening);
-        }
-        Ok(())
+    pub(crate) fn new(message: &[u8]) -> Self {
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(message);
+        Self(hasher.finalize().into())
     }
 }
 
 /// A randomly generated 32 byte key
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct CommitmentKey(pub(crate) [u8; 32]);
 
 impl CommitmentKey {
     /// Creates a random 32 byte key
     pub fn random() -> Self {
         Self(thread_rng().gen())
-    }
-}
-
-/// Opening information for a commitment
-#[derive(Debug, Clone, PartialEq)]
-pub struct Opening {
-    pub(crate) key: CommitmentKey,
-    pub(crate) message: Vec<u8>,
-}
-
-impl Opening {
-    /// Creates a new opening for a keyed hash commitment
-    pub fn new(message: &[u8]) -> Self {
-        Self {
-            key: CommitmentKey::random(),
-            message: message.to_vec(),
-        }
-    }
-
-    /// Returns message
-    pub fn message(&self) -> &[u8] {
-        &self.message
-    }
-
-    /// Verifies this opening corresponds to a given message.
-    pub fn verify_message(&self, message: &[u8]) -> Result<(), CommitmentError> {
-        if self.message != message {
-            return Err(CommitmentError::InvalidMessage);
-        }
-        Ok(())
-    }
-
-    /// Creates a new commitment to this opening
-    pub fn commit(&self) -> HashCommitment {
-        let mut message = self.key.0.to_vec();
-        message.extend(&self.message);
-        HashCommitment(blake3(&message))
     }
 }
 
@@ -82,35 +120,32 @@ mod test {
     #[test]
     fn test_commitment_pass() {
         let message = [0, 1, 2, 3u8];
-        let opening = Opening::new(&message);
-        let commitment = opening.commit();
+        let (opening, commitment) = message.commit().unwrap();
 
-        commitment.verify(&opening).unwrap();
+        opening.verify(&commitment).unwrap();
     }
 
     #[test]
     fn test_commitment_invalid_key() {
         let message = [0, 1, 2, 3u8];
-        let mut opening = Opening::new(&message);
-        let commitment = opening.commit();
+        let (mut opening, commitment) = message.commit().unwrap();
 
         opening.key.0[0] = opening.key.0[0] - 1;
 
-        let err = commitment.verify(&opening).unwrap_err();
+        let err = opening.verify(&commitment).unwrap_err();
 
-        assert!(matches!(err, CommitmentError::InvalidOpening));
+        assert!(matches!(err, CommitmentError::InvalidCommitment));
     }
 
     #[test]
-    fn test_commitment_invalid_message() {
+    fn test_commitment_invalid_data() {
         let message = [0, 1, 2, 3u8];
-        let mut opening = Opening::new(&message);
-        let commitment = opening.commit();
+        let (mut opening, commitment) = message.commit().unwrap();
 
-        opening.message[0] = opening.message[0] + 1;
+        opening.data[0] = opening.data[0] + 1;
 
-        let err = commitment.verify(&opening).unwrap_err();
+        let err = opening.verify(&commitment).unwrap_err();
 
-        assert!(matches!(err, CommitmentError::InvalidOpening));
+        assert!(matches!(err, CommitmentError::InvalidCommitment));
     }
 }

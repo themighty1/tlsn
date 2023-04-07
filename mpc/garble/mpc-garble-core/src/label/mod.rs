@@ -3,6 +3,7 @@
 mod digest;
 //pub(crate) mod encoded;
 mod encoder;
+mod equality;
 mod value;
 //pub(crate) mod input;
 //pub(crate) mod output;
@@ -16,6 +17,7 @@ use mpc_core::Block;
 use rand::{CryptoRng, Rng};
 
 pub use digest::LabelsDigest;
+pub use equality::EqualityCheck;
 pub use value::{DecodingInfo, EncodedValue, EncodingCommitment, ValueError};
 //pub use encoded::{Encoded, GroupDecodingInfo};
 pub use encoder::{ChaChaEncoder, Encoder, EncoderRng};
@@ -35,6 +37,12 @@ impl Delta {
         let mut block = Block::random(rng);
         block.set_lsb();
         Self(block)
+    }
+
+    /// Returns the pointer bit of the inner block
+    #[inline]
+    pub(crate) fn pointer_bit(&self) -> bool {
+        self.0.lsb() == 1
     }
 
     /// Returns the inner block
@@ -125,6 +133,17 @@ impl<const N: usize> Labels<N, state::Full> {
         self.state.delta
     }
 
+    pub(crate) fn verify(&self, active: &Labels<N, state::Active>) -> Result<(), ValueError> {
+        for (low, active) in self.labels.iter().zip(active.labels.iter()) {
+            let high = low ^ self.state.delta;
+            if !(active == low || active == &high) {
+                return Err(ValueError::InvalidActiveEncoding);
+            }
+        }
+
+        Ok(())
+    }
+
     pub(crate) fn iter_blocks(&self) -> impl Iterator<Item = [Block; 2]> + '_ {
         self.labels
             .iter()
@@ -180,15 +199,6 @@ impl BitXor<&Label> for &Label {
     }
 }
 
-impl BitAnd<Label> for Label {
-    type Output = Self;
-
-    #[inline]
-    fn bitand(self, rhs: Label) -> Self::Output {
-        Self(self.0 & rhs.0)
-    }
-}
-
 impl BitXor<Delta> for Label {
     type Output = Self;
 
@@ -198,12 +208,12 @@ impl BitXor<Delta> for Label {
     }
 }
 
-impl BitAnd<Delta> for Label {
-    type Output = Self;
+impl BitXor<Delta> for &Label {
+    type Output = Label;
 
     #[inline]
-    fn bitand(self, rhs: Delta) -> Self::Output {
-        Self(self.0 & rhs.0)
+    fn bitxor(self, rhs: Delta) -> Self::Output {
+        Label(self.0 ^ rhs.0)
     }
 }
 

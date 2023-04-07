@@ -8,11 +8,15 @@ use async_trait::async_trait;
 use futures::channel::oneshot::Canceled;
 use mpc_circuits::Circuit;
 use utils_aio::Channel;
+pub mod config;
 pub(crate) mod evaluator;
 pub(crate) mod generator;
+pub(crate) mod types;
 mod vm;
 
 //pub type GarbleChannel = Box<dyn Channel<GarbleMessage, Error = std::io::Error>>;
+
+pub(crate) const DEFAULT_BATCH_SIZE: usize = 1024;
 
 #[derive(Debug, thiserror::Error)]
 pub enum GCError {
