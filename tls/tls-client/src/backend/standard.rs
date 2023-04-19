@@ -1,6 +1,5 @@
 use super::{Backend, BackendError};
 use crate::{DecryptMode, EncryptMode, Error};
-
 use aes_gcm::{
     aead::{generic_array::GenericArray, Aead, NewAead, Payload},
     Aes128Gcm,
@@ -9,6 +8,10 @@ use async_trait::async_trait;
 use p256::{ecdh::EphemeralSecret, EncodedPoint, PublicKey as ECDHPublicKey};
 use rand::{rngs::OsRng, thread_rng, Rng};
 
+use digest::Digest;
+use hmac::{Hmac, Mac};
+use sha2::Sha256;
+use std::convert::TryInto;
 use tls_core::{
     key::PublicKey,
     msgs::{
@@ -19,11 +22,6 @@ use tls_core::{
     },
     suites::{self, SupportedCipherSuite},
 };
-
-use digest::Digest;
-use hmac::{Hmac, Mac};
-use sha2::Sha256;
-use std::convert::TryInto;
 
 type HmacSha256 = Hmac<Sha256>;
 

@@ -1,10 +1,9 @@
 use crate::{backend::BackendError, rand};
+use std::{error::Error as StdError, fmt, time::SystemTimeError};
 use tls_core::{
     msgs::enums::{AlertDescription, ContentType, HandshakeType},
     Error as CoreError,
 };
-
-use std::{error::Error as StdError, fmt, time::SystemTimeError};
 
 /// rustls reports protocol errors using this type.
 #[derive(Debug, PartialEq, Clone)]

@@ -7,6 +7,13 @@ use crate::{
     record_layer,
     vecbuf::ChunkVecBuffer,
 };
+use async_trait::async_trait;
+use std::{
+    collections::VecDeque,
+    convert::TryFrom,
+    io, mem,
+    ops::{Deref, DerefMut},
+};
 use tls_core::{
     msgs::{
         alert::AlertMessagePayload,
@@ -19,14 +26,6 @@ use tls_core::{
         message::{Message, MessagePayload, OpaqueMessage, PlainMessage},
     },
     suites::SupportedCipherSuite,
-};
-
-use async_trait::async_trait;
-use std::{
-    collections::VecDeque,
-    convert::TryFrom,
-    io, mem,
-    ops::{Deref, DerefMut},
 };
 
 /// Values of this structure are returned from [`Connection::process_new_packets`]

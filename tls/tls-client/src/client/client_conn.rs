@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 
+use super::hs;
 #[cfg(feature = "logging")]
 use crate::log::trace;
 use crate::{
@@ -9,6 +10,13 @@ use crate::{
     kx::SupportedKxGroup,
     sign, verify, Backend, KeyLog,
 };
+use std::{
+    convert::TryFrom,
+    error::Error as StdError,
+    fmt, io, mem,
+    ops::{Deref, DerefMut},
+    sync::Arc,
+};
 use tls_core::{
     msgs::{
         enums::{CipherSuite, ProtocolVersion, SignatureScheme},
@@ -17,16 +25,6 @@ use tls_core::{
     },
     suites::SupportedCipherSuite,
     versions,
-};
-
-use super::hs;
-
-use std::{
-    convert::TryFrom,
-    error::Error as StdError,
-    fmt, io, mem,
-    ops::{Deref, DerefMut},
-    sync::Arc,
 };
 
 /// A trait for the ability to store client session data.

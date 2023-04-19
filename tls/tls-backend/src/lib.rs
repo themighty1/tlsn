@@ -1,3 +1,4 @@
+use async_trait::async_trait;
 use tls_core::{
     key::PublicKey,
     msgs::{
@@ -7,8 +8,6 @@ use tls_core::{
     },
     suites::SupportedCipherSuite,
 };
-
-use async_trait::async_trait;
 
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum BackendError {

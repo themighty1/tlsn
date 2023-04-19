@@ -1,7 +1,12 @@
+use super::{client_conn::ClientConnectionData, hs::ClientContext};
 #[cfg(feature = "logging")]
 use crate::log::{debug, trace};
 use crate::{
     check::{inappropriate_handshake_message, inappropriate_message},
+    client::{
+        common::{ClientAuthDetails, ServerCertDetails},
+        hs, ClientConfig, ServerName,
+    },
     conn::{CommonState, ConnectionRandoms, State},
     error::Error,
     hash_hs::HandshakeHash,
@@ -10,6 +15,9 @@ use crate::{
     ticketer::TimeBase,
     verify,
 };
+use async_trait::async_trait;
+use ring::constant_time;
+use std::sync::Arc;
 use tls_core::{
     key::PublicKey,
     msgs::{
@@ -26,17 +34,6 @@ use tls_core::{
     },
     suites::{tls12, SupportedCipherSuite, Tls12CipherSuite},
 };
-
-use super::{client_conn::ClientConnectionData, hs::ClientContext};
-use crate::client::{
-    common::{ClientAuthDetails, ServerCertDetails},
-    hs, ClientConfig, ServerName,
-};
-
-use ring::constant_time;
-
-use async_trait::async_trait;
-use std::sync::Arc;
 
 pub(super) use server_hello::CompleteServerHelloHandling;
 

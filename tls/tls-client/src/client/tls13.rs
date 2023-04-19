@@ -1,8 +1,13 @@
+use super::{client_conn::ClientConnectionData, hs::ClientContext};
 #[cfg(feature = "logging")]
 use crate::log::{debug, trace, warn};
 use crate::{
     backend::{DecryptMode, EncryptMode},
     check::inappropriate_handshake_message,
+    client::{
+        common::{ClientAuthDetails, ClientHelloDetails, ServerCertDetails},
+        hs, ClientConfig, ServerName, StoresClientSessions,
+    },
     conn::{CommonState, ConnectionRandoms, State},
     error::Error,
     hash_hs::{HandshakeHash, HandshakeHashBuffer},
@@ -27,12 +32,6 @@ use tls_core::{
         message::{Message, MessagePayload},
     },
     suites::Tls13CipherSuite,
-};
-
-use super::{client_conn::ClientConnectionData, hs::ClientContext};
-use crate::client::{
-    common::{ClientAuthDetails, ClientHelloDetails, ServerCertDetails},
-    hs, ClientConfig, ServerName, StoresClientSessions,
 };
 
 use ring::constant_time;

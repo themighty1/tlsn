@@ -35,7 +35,6 @@ use super::tls12;
 use crate::client::{
     client_conn::ClientConnectionData, common::ClientHelloDetails, tls13, ClientConfig, ServerName,
 };
-
 use async_trait::async_trait;
 use std::sync::Arc;
 

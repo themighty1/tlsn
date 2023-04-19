@@ -1,30 +1,32 @@
 //! Assorted public API tests.
-use std::cell::RefCell;
-use std::convert::TryFrom;
 #[cfg(feature = "tls12")]
 use std::convert::TryInto;
-use std::fmt;
-use std::io::{self, IoSlice, Read, Write};
-use std::mem;
-use std::ops::{Deref, DerefMut};
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
-use std::sync::Mutex;
+use std::{
+    cell::RefCell,
+    convert::TryFrom,
+    fmt,
+    io::{self, IoSlice, Read, Write},
+    mem,
+    ops::{Deref, DerefMut},
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc, Mutex,
+    },
+};
 
 use log;
 
-use tls_client::client::ResolvesClientCert;
 #[cfg(feature = "quic")]
 use tls_client::quic::{self, ClientQuicExt, QuicExt, ServerQuicExt};
-use tls_client::{sign, Error, KeyLog};
-use tls_client::{CipherSuite, ProtocolVersion, SignatureScheme};
-use tls_client::{ClientConfig, ClientConnection};
-//use tls_client::{Stream, StreamOwned};
-use tls_client::{SupportedCipherSuite, ALL_CIPHER_SUITES};
-use tls_client::RustCryptoBackend;
+use tls_client::{
+    client::ResolvesClientCert, sign, CipherSuite, ClientConfig, ClientConnection, Error, KeyLog,
+    ProtocolVersion, RustCryptoBackend, SignatureScheme, SupportedCipherSuite, ALL_CIPHER_SUITES,
+};
 
-use rustls::server::{ClientHello, ResolvesServerCert};
-use rustls::{ServerConfig, ServerConnection};
+use rustls::{
+    server::{ClientHello, ResolvesServerCert},
+    ServerConfig, ServerConnection,
+};
 
 mod common;
 use crate::common::*;
@@ -591,8 +593,12 @@ async fn server_cert_resolve_with_sni() {
             ..Default::default()
         });
 
-        let mut client =
-            ClientConnection::new(Arc::new(client_config), Box::new(RustCryptoBackend::new()), dns_name("the-value-from-sni")).unwrap();
+        let mut client = ClientConnection::new(
+            Arc::new(client_config),
+            Box::new(RustCryptoBackend::new()),
+            dns_name("the-value-from-sni"),
+        )
+        .unwrap();
         client.start().await.unwrap();
         let mut server = ServerConnection::new(Arc::new(server_config)).unwrap();
 
@@ -613,8 +619,12 @@ async fn server_cert_resolve_with_alpn() {
             ..Default::default()
         });
 
-        let mut client =
-            ClientConnection::new(Arc::new(client_config), Box::new(RustCryptoBackend::new()), dns_name("sni-value")).unwrap();
+        let mut client = ClientConnection::new(
+            Arc::new(client_config),
+            Box::new(RustCryptoBackend::new()),
+            dns_name("sni-value"),
+        )
+        .unwrap();
         client.start().await.unwrap();
         let mut server = ServerConnection::new(Arc::new(server_config)).unwrap();
 
@@ -634,8 +644,12 @@ async fn client_trims_terminating_dot() {
             ..Default::default()
         });
 
-        let mut client =
-            ClientConnection::new(Arc::new(client_config), Box::new(RustCryptoBackend::new()), dns_name("some-host.com.")).unwrap();
+        let mut client = ClientConnection::new(
+            Arc::new(client_config),
+            Box::new(RustCryptoBackend::new()),
+            dns_name("some-host.com."),
+        )
+        .unwrap();
         client.start().await.unwrap();
         let mut server = ServerConnection::new(Arc::new(server_config)).unwrap();
 
@@ -666,7 +680,12 @@ async fn check_sigalgs_reduced_by_ciphersuite(
         ..Default::default()
     });
 
-    let mut client = ClientConnection::new(Arc::new(client_config), Box::new(RustCryptoBackend::new()), dns_name("localhost")).unwrap();
+    let mut client = ClientConnection::new(
+        Arc::new(client_config),
+        Box::new(RustCryptoBackend::new()),
+        dns_name("localhost"),
+    )
+    .unwrap();
     client.start().await.unwrap();
     let mut server = ServerConnection::new(Arc::new(server_config)).unwrap();
 
@@ -728,8 +747,12 @@ async fn client_with_sni_disabled_does_not_send_sni() {
             let mut client_config = make_client_config_with_versions(*kt, &[version]);
             client_config.enable_sni = false;
 
-            let mut client =
-                ClientConnection::new(Arc::new(client_config), Box::new(RustCryptoBackend::new()), dns_name("value-not-sent")).unwrap();
+            let mut client = ClientConnection::new(
+                Arc::new(client_config),
+                Box::new(RustCryptoBackend::new()),
+                dns_name("value-not-sent"),
+            )
+            .unwrap();
             client.start().await.unwrap();
             let mut server = ServerConnection::new(Arc::clone(&server_config)).unwrap();
 
@@ -2608,14 +2631,14 @@ mod test_quic {
                 .unwrap();
 
         use ring::rand::SecureRandom;
-        use rustls::internal::msgs::base::PayloadU16;
-        use rustls::internal::msgs::enums::{
-            CipherSuite, Compression, HandshakeType, NamedGroup, SignatureScheme,
+        use rustls::internal::msgs::{
+            base::PayloadU16,
+            enums::{CipherSuite, Compression, HandshakeType, NamedGroup, SignatureScheme},
+            handshake::{
+                ClientHelloPayload, HandshakeMessagePayload, KeyShareEntry, Random, SessionID,
+            },
+            message::PlainMessage,
         };
-        use rustls::internal::msgs::handshake::{
-            ClientHelloPayload, HandshakeMessagePayload, KeyShareEntry, Random, SessionID,
-        };
-        use rustls::internal::msgs::message::PlainMessage;
 
         let rng = ring::rand::SystemRandom::new();
         let mut random = [0; 32];
@@ -2670,14 +2693,14 @@ mod test_quic {
         let server_config = Arc::new(server_config);
 
         use ring::rand::SecureRandom;
-        use rustls::internal::msgs::base::PayloadU16;
-        use rustls::internal::msgs::enums::{
-            CipherSuite, Compression, HandshakeType, NamedGroup, SignatureScheme,
+        use rustls::internal::msgs::{
+            base::PayloadU16,
+            enums::{CipherSuite, Compression, HandshakeType, NamedGroup, SignatureScheme},
+            handshake::{
+                ClientHelloPayload, HandshakeMessagePayload, KeyShareEntry, Random, SessionID,
+            },
+            message::PlainMessage,
         };
-        use rustls::internal::msgs::handshake::{
-            ClientHelloPayload, HandshakeMessagePayload, KeyShareEntry, Random, SessionID,
-        };
-        use rustls::internal::msgs::message::PlainMessage;
 
         let rng = ring::rand::SystemRandom::new();
         let mut random = [0; 32];
@@ -2917,8 +2940,10 @@ mod test_quic {
 #[tokio::test]
 async fn test_client_does_not_offer_sha1() {
     use tls_client::internal::msgs::{
-        codec::Reader, enums::HandshakeType, handshake::HandshakePayload, message::MessagePayload,
-        message::OpaqueMessage,
+        codec::Reader,
+        enums::HandshakeType,
+        handshake::HandshakePayload,
+        message::{MessagePayload, OpaqueMessage},
     };
 
     for kt in ALL_KEY_TYPES.iter() {
@@ -3105,8 +3130,12 @@ async fn test_client_mtu_reduction() {
     for kt in ALL_KEY_TYPES.iter() {
         let mut client_config = make_client_config(*kt);
         client_config.max_fragment_size = Some(64);
-        let mut client =
-            ClientConnection::new(Arc::new(client_config), Box::new(RustCryptoBackend::new()), dns_name("localhost")).unwrap();
+        let mut client = ClientConnection::new(
+            Arc::new(client_config),
+            Box::new(RustCryptoBackend::new()),
+            dns_name("localhost"),
+        )
+        .unwrap();
         client.start().await.unwrap();
         let writes = collect_write_lengths(&mut client);
         println!("writes at mtu=64: {:?}", writes);
@@ -3159,7 +3188,12 @@ async fn test_server_mtu_reduction() {
 async fn check_client_max_fragment_size(size: usize) -> Option<Error> {
     let mut client_config = make_client_config(KeyType::Ed25519);
     client_config.max_fragment_size = Some(size);
-    ClientConnection::new(Arc::new(client_config), Box::new(RustCryptoBackend::new()), dns_name("localhost")).err()
+    ClientConnection::new(
+        Arc::new(client_config),
+        Box::new(RustCryptoBackend::new()),
+        dns_name("localhost"),
+    )
+    .err()
 }
 
 #[tokio::test]
@@ -3195,7 +3229,7 @@ fn connection_types_are_not_huge() {
     assert_lt(mem::size_of::<ClientConnection>(), 1600);
 }
 
-use tls_client::internal::msgs::{message::Message, message::MessagePayload};
+use tls_client::internal::msgs::message::{Message, MessagePayload};
 
 #[tokio::test]
 async fn test_client_rejects_illegal_tls13_ccs() {
@@ -3251,16 +3285,24 @@ async fn test_client_tls12_no_resume_after_server_downgrade() {
     server_config_2.session_storage = Arc::new(rustls::server::NoServerSessionStorage {});
 
     dbg!("handshake 1");
-    let mut client_1 =
-        ClientConnection::new(client_config.clone(), Box::new(RustCryptoBackend::new()), "localhost".try_into().unwrap()).unwrap();
+    let mut client_1 = ClientConnection::new(
+        client_config.clone(),
+        Box::new(RustCryptoBackend::new()),
+        "localhost".try_into().unwrap(),
+    )
+    .unwrap();
     client_1.start().await.unwrap();
     let mut server_1 = ServerConnection::new(server_config_1).unwrap();
     common::do_handshake(&mut client_1, &mut server_1).await;
     assert_eq!(client_storage.puts(), 2);
 
     dbg!("handshake 2");
-    let mut client_2 =
-        ClientConnection::new(client_config, Box::new(RustCryptoBackend::new()), "localhost".try_into().unwrap()).unwrap();
+    let mut client_2 = ClientConnection::new(
+        client_config,
+        Box::new(RustCryptoBackend::new()),
+        "localhost".try_into().unwrap(),
+    )
+    .unwrap();
     client_2.start().await.unwrap();
     let mut server_2 = ServerConnection::new(Arc::new(server_config_2)).unwrap();
     common::do_handshake(&mut client_2, &mut server_2).await;
