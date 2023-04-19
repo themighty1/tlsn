@@ -1,19 +1,24 @@
-use super::Crypto;
+use super::{Backend, BackendError};
 use crate::{DecryptMode, EncryptMode, Error};
 
-use aes_gcm::aead::{generic_array::GenericArray, Aead, NewAead, Payload};
-use aes_gcm::Aes128Gcm;
+use aes_gcm::{
+    aead::{generic_array::GenericArray, Aead, NewAead, Payload},
+    Aes128Gcm,
+};
 use async_trait::async_trait;
 use p256::{ecdh::EphemeralSecret, EncodedPoint, PublicKey as ECDHPublicKey};
-use rand::rngs::OsRng;
-use rand::{thread_rng, Rng};
+use rand::{rngs::OsRng, thread_rng, Rng};
 
-use tls_core::key::PublicKey;
-use tls_core::msgs::base::Payload as TLSPayload;
-use tls_core::msgs::enums::{CipherSuite, ContentType, NamedGroup, ProtocolVersion};
-use tls_core::msgs::handshake::Random;
-use tls_core::msgs::message::{OpaqueMessage, PlainMessage};
-use tls_core::suites::{self, SupportedCipherSuite};
+use tls_core::{
+    key::PublicKey,
+    msgs::{
+        base::Payload as TLSPayload,
+        enums::{CipherSuite, ContentType, NamedGroup, ProtocolVersion},
+        handshake::Random,
+        message::{OpaqueMessage, PlainMessage},
+    },
+    suites::{self, SupportedCipherSuite},
+};
 
 use digest::Digest;
 use hmac::{Hmac, Mac};
@@ -65,7 +70,8 @@ pub(crate) fn seed_sf(handshake_blob: &[u8]) -> [u8; 47] {
     seed
 }
 
-pub struct StandardCrypto {
+/// Implementation of TLS backend using RustCrypto primitives
+pub struct RustCryptoBackend {
     client_random: Option<Random>,
     server_random: Option<Random>,
     // master_secret size is the same for all cipher suites
@@ -77,14 +83,15 @@ pub struct StandardCrypto {
     // session_keys size can vary depending on the ciphersuite
     session_keys: Option<Vec<u8>>,
     protocol_version: Option<ProtocolVersion>,
-    cipher_suite_name: Option<CipherSuite>,
+    cipher_suite: Option<SupportedCipherSuite>,
     curve: Option<NamedGroup>,
     implemented_suites: [CipherSuite; 2],
     encrypter: Option<Encrypter>,
     decrypter: Option<Decrypter>,
 }
 
-impl StandardCrypto {
+impl RustCryptoBackend {
+    /// Creates new instance of RustCrypto backend
     pub fn new() -> Self {
         Self {
             client_random: None,
@@ -95,11 +102,11 @@ impl StandardCrypto {
             ems_seed: None,
             session_keys: None,
             protocol_version: None,
-            cipher_suite_name: None,
+            cipher_suite: None,
             curve: Some(NamedGroup::secp256r1),
             implemented_suites: [
-                CipherSuite::TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
                 CipherSuite::TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
+                CipherSuite::TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
             ],
             encrypter: None,
             decrypter: None,
@@ -179,165 +186,116 @@ impl StandardCrypto {
         verify_data
     }
 
-    fn set_encrypter(&mut self) -> Result<(), Error> {
-        println!("IN message_encrypter ");
+    fn set_encrypter(&mut self) -> Result<(), BackendError> {
+        let cipher_suite = self.cipher_suite.ok_or(BackendError::InvalidState(
+            "can not set enccrypter, ciphersuite not set".to_string(),
+        ))?;
 
-        let cipher_suite = match self.cipher_suite_name {
-            Some(cs) => cs,
-            None => {
-                return Err(Error::General(
-                    "internal error: cipher_suite is not set".to_string(),
-                ))
-            }
-        };
-
-        match cipher_suite {
+        match cipher_suite.suite() {
             CipherSuite::TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
             | CipherSuite::TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256 => {
                 // extract client_write_key and client_write_iv. They may be at different
                 // offsets depending on the cipher suite.
                 let mut write_key = [0u8; 16];
                 let mut write_iv = [0u8; 4];
-                let session_keys = match &self.session_keys {
-                    Some(k) => k,
-                    None => {
-                        return Err(Error::General(
-                            "internal error: session_keys is not set".to_string(),
-                        ))
-                    }
-                };
+                let session_keys = self
+                    .session_keys
+                    .as_ref()
+                    .ok_or(BackendError::InvalidState(
+                        "can not set encrypter, session_keys are not set".to_string(),
+                    ))?;
                 write_key.copy_from_slice(&session_keys[0..16]);
                 write_iv.copy_from_slice(&session_keys[32..36]);
-                self.encrypter = Some(Encrypter::new(write_key, write_iv, cipher_suite));
+                self.encrypter = Some(Encrypter::new(write_key, write_iv, cipher_suite.suite()));
             }
-            _ => {
-                return Err(Error::General(
-                    "Cipher suite is not yet implemented".to_string(),
-                ))
-            }
+            suite => return Err(BackendError::UnsupportedCiphersuite(suite)),
         }
         Ok(())
     }
-    fn set_decrypter(&mut self) -> Result<(), Error> {
-        println!("IN message_decrypter ");
+    fn set_decrypter(&mut self) -> Result<(), BackendError> {
+        let cipher_suite = self.cipher_suite.ok_or(BackendError::InvalidState(
+            "can not set decrypter, ciphersuite not set".to_string(),
+        ))?;
 
-        let cipher_suite = match self.cipher_suite_name {
-            Some(cs) => cs,
-            None => {
-                return Err(Error::General(
-                    "internal error: cipher_suite is not set".to_string(),
-                ))
-            }
-        };
-
-        match cipher_suite {
+        match cipher_suite.suite() {
             CipherSuite::TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
             | CipherSuite::TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256 => {
                 // extract server_write_key and server_write_iv. They may be at different
                 // offsets depending on the cipher suite.
                 let mut write_key = [0u8; 16];
                 let mut write_iv = [0u8; 4];
-                let session_keys = match &self.session_keys {
-                    Some(k) => k,
-                    None => {
-                        return Err(Error::General(
-                            "internal error: session_keys is not set".to_string(),
-                        ))
-                    }
-                };
+                let session_keys = self
+                    .session_keys
+                    .as_ref()
+                    .ok_or(BackendError::InvalidState(
+                        "can not set decrypter, session_keys are not set".to_string(),
+                    ))?;
                 write_key.copy_from_slice(&session_keys[16..32]);
                 write_iv.copy_from_slice(&session_keys[36..40]);
-                self.decrypter = Some(Decrypter::new(write_key, write_iv, cipher_suite));
+                self.decrypter = Some(Decrypter::new(write_key, write_iv, cipher_suite.suite()));
             }
-            _ => {
-                return Err(Error::General(
-                    "Cipher suite is not yet implemented".to_string(),
-                ))
-            }
+            suite => return Err(BackendError::UnsupportedCiphersuite(suite)),
         }
         Ok(())
     }
 }
 
 #[async_trait]
-impl Crypto for StandardCrypto {
-    fn select_protocol_version(&mut self, version: ProtocolVersion) -> Result<(), Error> {
+impl Backend for RustCryptoBackend {
+    async fn set_protocol_version(&mut self, version: ProtocolVersion) -> Result<(), BackendError> {
         match version {
             ProtocolVersion::TLSv1_2 => {
                 self.protocol_version = Some(version);
                 Ok(())
             }
-            ProtocolVersion::TLSv1_3 => Err(Error::PeerIncompatibleError(
-                "TLS 1.3 not yet implemented".to_string(),
-            )),
-            _ => Err(Error::PeerIncompatibleError(
-                "peer selected unsupported TLS version".to_string(),
-            )),
+            version => return Err(BackendError::UnsupportedProtocolVersion(version)),
         }
     }
-    fn select_cipher_suite(&mut self, suite: SupportedCipherSuite) -> Result<(), Error> {
-        let ver = match self.protocol_version {
-            Some(ver) => ver,
-            None => {
-                return Err(Error::General(
-                    "internal error: trying to set ciphersuite when protocol is not set"
-                        .to_string(),
-                ));
-            }
-        };
 
-        let cs_name = match suite {
-            SupportedCipherSuite::Tls12(inner) => {
-                if ver != ProtocolVersion::TLSv1_2 {
-                    return Err(Error::General(
-                        "internal error: unexpected TLS version".to_string(),
-                    ));
-                }
-                inner.common.suite
-            }
-            SupportedCipherSuite::Tls13(_inner) => {
-                if ver != ProtocolVersion::TLSv1_3 {
-                    return Err(Error::General(
-                        "internal error: unexpected TLS version".to_string(),
-                    ));
-                }
-                return Err(Error::General("TLS 1.3 not yet implemented".to_string()));
-            }
-        };
+    async fn set_cipher_suite(&mut self, suite: SupportedCipherSuite) -> Result<(), BackendError> {
+        let version = self.protocol_version.ok_or(BackendError::InvalidState(
+            "can not set ciphersuite, protocol version not set".to_string(),
+        ))?;
 
-        if !self.implemented_suites.contains(&cs_name) {
-            return Err(Error::PeerIncompatibleError(format!(
-                "peer selected unsupported cipher suite: {:?}",
-                &cs_name
-            )));
+        if suite.version().version != version {
+            return Err(BackendError::InvalidConfig(
+                "Ciphersuite protocol version does not match configured version".to_string(),
+            ));
         }
-        self.cipher_suite_name = Some(cs_name);
+
+        if !self.implemented_suites.contains(&suite.suite()) {
+            return Err(BackendError::UnsupportedCiphersuite(suite.suite()));
+        }
+        self.cipher_suite = Some(suite);
 
         Ok(())
     }
-    fn suite(&self) -> Result<SupportedCipherSuite, Error> {
+
+    async fn get_suite(&mut self) -> Result<SupportedCipherSuite, BackendError> {
         // TODO: do we assume already having probed the TLS server by this point
         // so that we know the exact ciphersuite it supports? Otherwise, we may
         // want to return multiple CSs here.
         // TODO can we just return the CipherSuite enum?
         Ok(suites::tls12::TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256)
     }
-    fn set_encrypt(&mut self, _mode: EncryptMode) -> Result<(), Error> {
+
+    async fn set_encrypt(&mut self, _mode: EncryptMode) -> Result<(), BackendError> {
         todo!()
     }
-    fn set_decrypt(&mut self, _mode: DecryptMode) -> Result<(), Error> {
+
+    async fn set_decrypt(&mut self, _mode: DecryptMode) -> Result<(), BackendError> {
         todo!()
     }
-    async fn client_random(&mut self) -> Result<Random, Error> {
+
+    async fn get_client_random(&mut self) -> Result<Random, BackendError> {
         // generate client random and store it
         let r = Random(thread_rng().gen());
         self.client_random = Some(r);
-        println!("IN client_random {:?}", self.client_random);
         Ok(r)
     }
-    async fn client_key_share(&mut self) -> Result<PublicKey, Error> {
+
+    async fn get_client_key_share(&mut self) -> Result<PublicKey, BackendError> {
         // TODO make sure this and other methods are not called twice/out of order
-        println!("IN client_key_share");
         // generate our ECDH keypair
         let sk = EphemeralSecret::random(&mut OsRng);
         let pk_bytes = EncodedPoint::from(sk.public_key()).to_bytes().to_vec();
@@ -345,152 +303,124 @@ impl Crypto for StandardCrypto {
         self.ecdh_secret = Some(sk);
 
         // return our ECDH pubkey
-        let group = match self.curve {
-            Some(g) => g,
-            _ => {
-                return Err(Error::General(
-                    "internal error: ECDH key curve was not yet set".to_string(),
-                ));
-            }
-        };
+        let group = self.curve.ok_or(BackendError::InvalidState(
+            "ECDH key curve not set yet".to_string(),
+        ))?;
+
         Ok(PublicKey {
             group,
             key: pk_bytes,
         })
     }
-    async fn set_server_random(&mut self, random: Random) -> Result<(), Error> {
-        println!("IN set_server_random {:?}", random);
+
+    async fn set_server_random(&mut self, random: Random) -> Result<(), BackendError> {
         // store server random
         self.server_random = Some(random);
         Ok(())
     }
-    async fn set_server_key_share(&mut self, key: PublicKey) -> Result<(), Error> {
+
+    async fn set_server_key_share(&mut self, key: PublicKey) -> Result<(), BackendError> {
         // convert raw server ECDH pubkey to an object
-        let server_pk = match ECDHPublicKey::from_sec1_bytes(&key.key) {
-            Ok(key) => key,
-            Err(_e) => {
-                return Err(Error::PeerIncompatibleError(
-                    "peer sent unsupported ecdh key".to_string(),
-                ))
-            }
-        };
+        let server_pk =
+            ECDHPublicKey::from_sec1_bytes(&key.key).map_err(|_| BackendError::InvalidServerKey)?;
 
         let sk = self.ecdh_secret.as_ref().unwrap();
         // perform ECDH, obtain PMS (which is the X coordinate of the resulting
         // EC point). The size of X for 256-bit curves is 32 bytes, for 384-bit
         // curves it is 48 bytes etc.
-        let x_size = match self.curve {
-            Some(NamedGroup::secp256r1) => 32,
-            Some(NamedGroup::secp384r1) => 48,
-            _ => {
-                return Err(Error::General(
-                    "internal error: unexpected curve was set".to_string(),
-                ))
-            }
+        let x_size = match self.curve.ok_or(BackendError::InvalidState(
+            "ECDH key curve not set yet".to_string(),
+        ))? {
+            NamedGroup::secp256r1 => 32,
+            NamedGroup::secp384r1 => 48,
+            group => return Err(BackendError::UnsupportedCurveGroup(group)),
         };
+
         let mut pms = vec![0u8; x_size];
         let secret = *sk.diffie_hellman(&server_pk).as_bytes();
         pms.copy_from_slice(&secret);
-        println!("IN set_server_key_share pms {:?}", pms);
 
         let (client_random, server_random) = match (self.client_random, self.server_random) {
             (Some(cr), Some(sr)) => (cr.0, sr.0),
             _ => {
-                return Err(Error::General(
-                    "internal error: client_random and/or server_random not set".to_string(),
+                return Err(BackendError::InvalidState(
+                    "Client_random and/or server_random not set".to_string(),
                 ))
             }
         };
 
-        (self.master_secret, self.session_keys) = match self.protocol_version {
-            Some(ProtocolVersion::TLSv1_2) => {
+        (self.master_secret, self.session_keys) = match self.protocol_version.ok_or(
+            BackendError::InvalidState("Protocol version not set".to_string()),
+        )? {
+            ProtocolVersion::TLSv1_2 => {
                 let (ms, ek) = self.key_expansion_tls12(&client_random, &server_random, &pms);
                 (Some(ms), Some(ek.to_vec()))
             }
-            _ => {
-                return Err(Error::General(
-                    "internal error: TLS version not set or not supported".to_string(),
-                ))
-            }
+            version => return Err(BackendError::UnsupportedProtocolVersion(version)),
         };
-        println!(
-            "IN set_server_key_share self.master_secret {:?}",
-            self.master_secret
-        );
 
         self.set_encrypter()?;
         self.set_decrypter()?;
 
         Ok(())
     }
-    async fn set_hs_hash_client_key_exchange(&mut self, hash: &[u8]) -> Result<(), Error> {
+
+    async fn set_hs_hash_client_key_exchange(&mut self, hash: &[u8]) -> Result<(), BackendError> {
         self.ems_seed = Some(hash.to_vec());
         Ok(())
     }
-    async fn set_hs_hash_server_hello(&mut self, _hash: &[u8]) -> Result<(), Error> {
-        println!("IN set_hs_hash_server_hello");
+
+    async fn set_hs_hash_server_hello(&mut self, _hash: &[u8]) -> Result<(), BackendError> {
         Ok(())
-        // will be used only in 2PC
-
-        // TODO the handshake hash is not up to Server Hello but must
-        // be up to Client Key Exchange, so this fn should be called
-        // receive_hs_hash_client_key_exchange
     }
-    async fn server_finished(&mut self, hash: &[u8]) -> Result<Vec<u8>, Error> {
-        println!("IN server_finished ");
-        let ms = match self.master_secret {
-            Some(ms) => ms,
-            _ => {
-                return Err(Error::General(
-                    "internal error: master secret was not set".to_string(),
-                ))
-            }
-        };
 
-        let verify_data = match self.protocol_version {
-            Some(ProtocolVersion::TLSv1_2) => self.verify_data_sf_tls12(hash, &ms),
-            _ => {
-                return Err(Error::General(
-                    "internal error: TLS version not set or not supported".to_string(),
-                ))
-            }
+    async fn get_server_finished_vd(&mut self, hash: &[u8]) -> Result<Vec<u8>, BackendError> {
+        let ms = self.master_secret.ok_or(BackendError::InvalidState(
+            "Master secret not set".to_string(),
+        ))?;
+
+        let verify_data = match self.protocol_version.ok_or(BackendError::InvalidState(
+            "Protocol version not set".to_string(),
+        ))? {
+            ProtocolVersion::TLSv1_2 => self.verify_data_sf_tls12(hash, &ms),
+            _ => unreachable!(),
         };
         Ok(verify_data.to_vec())
     }
-    async fn client_finished(&mut self, hash: &[u8]) -> Result<Vec<u8>, Error> {
-        println!("IN client_finished ");
 
-        let ms = match self.master_secret {
-            Some(ms) => ms,
-            _ => {
-                return Err(Error::General(
-                    "internal error: master secret was not set".to_string(),
-                ))
-            }
-        };
+    async fn get_client_finished_vd(&mut self, hash: &[u8]) -> Result<Vec<u8>, BackendError> {
+        let ms = self.master_secret.ok_or(BackendError::InvalidState(
+            "Master secret not set".to_string(),
+        ))?;
 
-        let verify_data = match self.protocol_version {
-            Some(ProtocolVersion::TLSv1_2) => self.verify_data_cf_tls12(hash, &ms),
-            _ => {
-                return Err(Error::General(
-                    "internal error: TLS version not set or not supported".to_string(),
-                ))
-            }
+        let verify_data = match self.protocol_version.ok_or(BackendError::InvalidState(
+            "Protocol version not set".to_string(),
+        ))? {
+            ProtocolVersion::TLSv1_2 => self.verify_data_cf_tls12(hash, &ms),
+            _ => unreachable!(),
         };
         Ok(verify_data.to_vec())
     }
-    async fn encrypt(&mut self, m: PlainMessage, seq: u64) -> Result<OpaqueMessage, Error> {
+
+    async fn encrypt(
+        &mut self,
+        msg: PlainMessage,
+        seq: u64,
+    ) -> Result<OpaqueMessage, BackendError> {
         let enc = self
             .encrypter
             .as_mut()
-            .ok_or(Error::General("encrypter not ready".to_string()))?;
+            .ok_or(BackendError::EncryptionError(
+                "Encrypter not ready".to_string(),
+            ))?;
+
         match enc.cipher_suite {
             CipherSuite::TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
             | CipherSuite::TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256 => {
-                match m.version {
+                match msg.version {
                     ProtocolVersion::TLSv1_2 => {
                         let explicit_nonce;
-                        match m.typ {
+                        match msg.typ {
                             ContentType::Handshake => {
                                 // In TLS 1.2 the only handshake message that needs to be
                                 // encrypted by the client is Client_Finished.
@@ -504,55 +434,48 @@ impl Crypto for StandardCrypto {
                                 explicit_nonce = thread_rng().gen();
                             }
                             _ => {
-                                return Err(Error::General(
-                                    "internal error: unexpected ContentType".to_string(),
+                                return Err(BackendError::EncryptionError(
+                                    "Unexpected ContentType".to_string(),
                                 ));
                             }
                         };
-                        return enc.encrypt_aes128gcm(&m, seq, &explicit_nonce);
+                        return enc.encrypt_aes128gcm(&msg, seq, &explicit_nonce);
                     }
-                    ProtocolVersion::TLSv1_3 => {
-                        return Err(Error::General("TLS 1.3 not yet implemented".to_string()));
-                    }
-                    _ => {
-                        return Err(Error::General(
-                            "internal error: unexpected TLS version".to_string(),
-                        ));
+                    version => {
+                        return Err(BackendError::UnsupportedProtocolVersion(version));
                     }
                 }
             }
-            _ => {
-                return Err(Error::General(
-                    "internal error: suite not implemented".to_string(),
-                ));
+            suite => {
+                return Err(BackendError::UnsupportedCiphersuite(suite));
             }
         }
     }
 
-    async fn decrypt(&mut self, m: OpaqueMessage, seq: u64) -> Result<PlainMessage, Error> {
+    async fn decrypt(
+        &mut self,
+        msg: OpaqueMessage,
+        seq: u64,
+    ) -> Result<PlainMessage, BackendError> {
         let dec = self
             .decrypter
             .as_mut()
-            .ok_or(Error::General("decrypter not ready".to_string()))?;
+            .ok_or(BackendError::DecryptionError(
+                "Decrypter not ready".to_string(),
+            ))?;
+
         match dec.cipher_suite {
             CipherSuite::TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
-            | CipherSuite::TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256 => match m.version {
+            | CipherSuite::TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256 => match msg.version {
                 ProtocolVersion::TLSv1_2 => {
-                    return dec.decrypt_aes128gcm(&m, seq);
+                    return dec.decrypt_aes128gcm(&msg, seq);
                 }
-                ProtocolVersion::TLSv1_3 => {
-                    return Err(Error::General("TLS 1.3 not yet implemented".to_string()));
-                }
-                _ => {
-                    return Err(Error::General(
-                        "internal error: unexpected TLS version".to_string(),
-                    ));
+                version => {
+                    return Err(BackendError::UnsupportedProtocolVersion(version));
                 }
             },
-            _ => {
-                return Err(Error::General(
-                    "internal error: suite not implemented".to_string(),
-                ));
+            suite => {
+                return Err(BackendError::UnsupportedCiphersuite(suite));
             }
         }
     }
@@ -579,8 +502,7 @@ impl Encrypter {
         m: &PlainMessage,
         seq: u64,
         explicit_nonce: &[u8; 8],
-    ) -> Result<OpaqueMessage, Error> {
-        println!("IN encrypt_aes128gcm {:?}", m);
+    ) -> Result<OpaqueMessage, BackendError> {
         let mut aad = [0u8; 13];
         aad[..8].copy_from_slice(&seq.to_be_bytes());
         aad[8] = m.typ.get_u8();
@@ -590,8 +512,6 @@ impl Encrypter {
             msg: &m.payload.0,
             aad: &aad,
         };
-        println!("IN encrypt_aes128gcm {:?}", m.payload.0);
-        println!("IN encrypt_aes128gcm {:?}", aad);
 
         let mut nonce = [0u8; 12];
         nonce[..4].copy_from_slice(&self.write_iv);
@@ -610,7 +530,7 @@ impl Encrypter {
             version: m.version,
             payload: TLSPayload::new(nonce_ct_mac),
         };
-        println!("IN encrypt_aes128gcm {:?}", om);
+
         Ok(om)
     }
 }
@@ -630,8 +550,7 @@ impl Decrypter {
         }
     }
 
-    fn decrypt_aes128gcm(&self, m: &OpaqueMessage, seq: u64) -> Result<PlainMessage, Error> {
-        println!("IN decrypt_aes128gcm {:?}", m);
+    fn decrypt_aes128gcm(&self, m: &OpaqueMessage, seq: u64) -> Result<PlainMessage, BackendError> {
         // TODO tls-client shouldnt call decrypt with CCS
         if m.typ == ContentType::ChangeCipherSpec {
             return Ok(PlainMessage {

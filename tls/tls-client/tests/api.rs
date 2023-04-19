@@ -21,6 +21,7 @@ use tls_client::{CipherSuite, ProtocolVersion, SignatureScheme};
 use tls_client::{ClientConfig, ClientConnection};
 //use tls_client::{Stream, StreamOwned};
 use tls_client::{SupportedCipherSuite, ALL_CIPHER_SUITES};
+use tls_client::RustCryptoBackend;
 
 use rustls::server::{ClientHello, ResolvesServerCert};
 use rustls::{ServerConfig, ServerConnection};
@@ -591,7 +592,7 @@ async fn server_cert_resolve_with_sni() {
         });
 
         let mut client =
-            ClientConnection::new(Arc::new(client_config), dns_name("the-value-from-sni")).unwrap();
+            ClientConnection::new(Arc::new(client_config), Box::new(RustCryptoBackend::new()), dns_name("the-value-from-sni")).unwrap();
         client.start().await.unwrap();
         let mut server = ServerConnection::new(Arc::new(server_config)).unwrap();
 
@@ -613,7 +614,7 @@ async fn server_cert_resolve_with_alpn() {
         });
 
         let mut client =
-            ClientConnection::new(Arc::new(client_config), dns_name("sni-value")).unwrap();
+            ClientConnection::new(Arc::new(client_config), Box::new(RustCryptoBackend::new()), dns_name("sni-value")).unwrap();
         client.start().await.unwrap();
         let mut server = ServerConnection::new(Arc::new(server_config)).unwrap();
 
@@ -634,7 +635,7 @@ async fn client_trims_terminating_dot() {
         });
 
         let mut client =
-            ClientConnection::new(Arc::new(client_config), dns_name("some-host.com.")).unwrap();
+            ClientConnection::new(Arc::new(client_config), Box::new(RustCryptoBackend::new()), dns_name("some-host.com.")).unwrap();
         client.start().await.unwrap();
         let mut server = ServerConnection::new(Arc::new(server_config)).unwrap();
 
@@ -665,7 +666,7 @@ async fn check_sigalgs_reduced_by_ciphersuite(
         ..Default::default()
     });
 
-    let mut client = ClientConnection::new(Arc::new(client_config), dns_name("localhost")).unwrap();
+    let mut client = ClientConnection::new(Arc::new(client_config), Box::new(RustCryptoBackend::new()), dns_name("localhost")).unwrap();
     client.start().await.unwrap();
     let mut server = ServerConnection::new(Arc::new(server_config)).unwrap();
 
@@ -728,7 +729,7 @@ async fn client_with_sni_disabled_does_not_send_sni() {
             client_config.enable_sni = false;
 
             let mut client =
-                ClientConnection::new(Arc::new(client_config), dns_name("value-not-sent")).unwrap();
+                ClientConnection::new(Arc::new(client_config), Box::new(RustCryptoBackend::new()), dns_name("value-not-sent")).unwrap();
             client.start().await.unwrap();
             let mut server = ServerConnection::new(Arc::clone(&server_config)).unwrap();
 
@@ -747,6 +748,7 @@ async fn client_checks_server_certificate_with_given_name() {
             let client_config = make_client_config_with_versions(*kt, &[version]);
             let mut client = ClientConnection::new(
                 Arc::new(client_config),
+                Box::new(RustCryptoBackend::new()),
                 dns_name("not-the-right-hostname.com"),
             )
             .unwrap();
@@ -3104,7 +3106,7 @@ async fn test_client_mtu_reduction() {
         let mut client_config = make_client_config(*kt);
         client_config.max_fragment_size = Some(64);
         let mut client =
-            ClientConnection::new(Arc::new(client_config), dns_name("localhost")).unwrap();
+            ClientConnection::new(Arc::new(client_config), Box::new(RustCryptoBackend::new()), dns_name("localhost")).unwrap();
         client.start().await.unwrap();
         let writes = collect_write_lengths(&mut client);
         println!("writes at mtu=64: {:?}", writes);
@@ -3157,7 +3159,7 @@ async fn test_server_mtu_reduction() {
 async fn check_client_max_fragment_size(size: usize) -> Option<Error> {
     let mut client_config = make_client_config(KeyType::Ed25519);
     client_config.max_fragment_size = Some(size);
-    ClientConnection::new(Arc::new(client_config), dns_name("localhost")).err()
+    ClientConnection::new(Arc::new(client_config), Box::new(RustCryptoBackend::new()), dns_name("localhost")).err()
 }
 
 #[tokio::test]
@@ -3250,7 +3252,7 @@ async fn test_client_tls12_no_resume_after_server_downgrade() {
 
     dbg!("handshake 1");
     let mut client_1 =
-        ClientConnection::new(client_config.clone(), "localhost".try_into().unwrap()).unwrap();
+        ClientConnection::new(client_config.clone(), Box::new(RustCryptoBackend::new()), "localhost".try_into().unwrap()).unwrap();
     client_1.start().await.unwrap();
     let mut server_1 = ServerConnection::new(server_config_1).unwrap();
     common::do_handshake(&mut client_1, &mut server_1).await;
@@ -3258,7 +3260,7 @@ async fn test_client_tls12_no_resume_after_server_downgrade() {
 
     dbg!("handshake 2");
     let mut client_2 =
-        ClientConnection::new(client_config, "localhost".try_into().unwrap()).unwrap();
+        ClientConnection::new(client_config, Box::new(RustCryptoBackend::new()), "localhost".try_into().unwrap()).unwrap();
     client_2.start().await.unwrap();
     let mut server_2 = ServerConnection::new(Arc::new(server_config_2)).unwrap();
     common::do_handshake(&mut client_2, &mut server_2).await;

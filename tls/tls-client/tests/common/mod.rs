@@ -10,6 +10,7 @@ use tls_client::Error;
 use tls_client::RootCertStore;
 use tls_client::{Certificate, PrivateKey};
 use tls_client::{ClientConfig, ClientConnection};
+use tls_client::RustCryptoBackend;
 
 use rustls::server::AllowAnyAuthenticatedClient;
 use rustls::{ServerConfig, ServerConnection};
@@ -490,7 +491,7 @@ pub async fn make_pair_for_arc_configs(
     server_config: &Arc<ServerConfig>,
 ) -> (ClientConnection, ServerConnection) {
     let mut client =
-        ClientConnection::new(Arc::clone(client_config), dns_name("localhost")).unwrap();
+        ClientConnection::new(Arc::clone(client_config), Box::new(RustCryptoBackend::new()), dns_name("localhost")).unwrap();
     client.start().await.unwrap();
     (
         client,
