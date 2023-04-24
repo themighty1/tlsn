@@ -1,6 +1,5 @@
-use buffer::{RequestBuffer, ResponseBuffer};
 use config::ProverConfig;
-use std::{future::Future, io::Read, net::TcpStream};
+use std::{future::Future, net::TcpStream};
 use tls_client::ClientConnection;
 
 use self::buffer::ExchangeBuffer;
@@ -15,28 +14,28 @@ pub struct Prover {
 }
 
 impl Prover {
-    pub fn new(config: ProverConfig) -> Self {
+    pub fn new(_config: ProverConfig) -> Self {
         todo!();
     }
 
     // Caller needs to run future on executor
     pub fn run(&mut self) -> impl Future<Output = Result<(), ProverError>> + '_ {
-        async move {
-            loop {
-                // Pull requests from the request buffer
-                self.tls_connection.read_tls(&mut self.tcp_stream)?;
-                self.tls_connection.process_new_packets().await?;
-                self.tls_connection
-                    .reader()
-                    .read_to_end(&mut self.response_buffer.0)?;
-
-                // Push responses into the response buffer
-                self.tls_connection
-                    .write_all_plaintext(&self.request_buffer.0)
-                    .await?;
-                self.tls_connection.write_tls(&mut self.tcp_stream)?;
-            }
-        }
+        async { Ok(()) }
+        //        async move {
+        //            loop {
+        //                // Pull requests from the request buffer
+        //                self.tls_connection.read_tls(&mut self.tcp_stream)?;
+        //                self.tls_connection.process_new_packets().await?;
+        //                self.tls_connection.reader().read_to_end(&mut self.buffer)?;
+        //
+        //                // Push responses into the response buffer
+        //                self.tls_connection
+        //                    .write_all_plaintext(&self.buffer)
+        //                    .await?;
+        //                self.tls_connection.write_tls(&mut self.tcp_stream)?;
+        //            }
+        //        }
+        //    }
     }
 }
 
