@@ -3,14 +3,15 @@ use config::ProverConfig;
 use std::{future::Future, io::Read, net::TcpStream};
 use tls_client::ClientConnection;
 
+use self::buffer::ExchangeBuffer;
+
 mod buffer;
 mod config;
 
 pub struct Prover {
-    request_buffer: RequestBuffer,
-    response_buffer: ResponseBuffer,
     tls_connection: ClientConnection,
     tcp_stream: TcpStream,
+    buffer: ExchangeBuffer,
 }
 
 impl Prover {
@@ -24,10 +25,10 @@ impl Prover {
             loop {
                 // Pull requests from the request buffer
                 self.tls_connection.read_tls(&mut self.tcp_stream)?;
+                self.tls_connection.process_new_packets().await?;
                 self.tls_connection
                     .reader()
                     .read_to_end(&mut self.response_buffer.0)?;
-                self.tls_connection.process_new_packets().await?;
 
                 // Push responses into the response buffer
                 self.tls_connection
