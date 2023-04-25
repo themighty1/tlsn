@@ -5,26 +5,29 @@ use futures::{
 use std::{
     io::{Error, Read, Write},
     pin::Pin,
-    sync::atomic::AtomicUsize,
+    sync::atomic::{AtomicBool, AtomicUsize},
 };
 
-pub struct AtomicByteBuffer {
+#[derive(Debug)]
+pub struct RingBuffer {
     buffer: Vec<u8>,
     read_mark: AtomicUsize,
     write_mark: AtomicUsize,
+    can_write: AtomicBool,
     read_waker: AtomicWaker,
     write_waker: AtomicWaker,
     bit_mask: usize,
 }
 
-impl AtomicByteBuffer {
+impl RingBuffer {
     pub fn new(size: usize) -> Self {
         let optimized_size = size.next_power_of_two();
         let bit_mask = optimized_size - 1;
         Self {
             buffer: vec![0; optimized_size],
-            read_mark: AtomicUsize::new(bit_mask - 1),
-            write_mark: AtomicUsize::new(bit_mask),
+            read_mark: AtomicUsize::new(0),
+            write_mark: AtomicUsize::new(0),
+            can_write: AtomicBool::new(true),
             read_waker: AtomicWaker::new(),
             write_waker: AtomicWaker::new(),
             bit_mask,
@@ -39,19 +42,29 @@ impl AtomicByteBuffer {
     }
 
     fn increment_read_mark(&self, max: usize) -> Result<(usize, usize), BufferError> {
-        let out = self.increment_mark(&self.read_mark, &self.write_mark, max);
-        if out.is_ok() {
-            self.write_waker.wake();
+        let (mark, mut len) = self.increment_mark(&self.read_mark, &self.write_mark, max)?;
+        if len == self.buffer.len()
+            && self
+                .can_write
+                .swap(true, std::sync::atomic::Ordering::AcqRel)
+        {
+            len = 0;
         }
-        out
+        self.read_waker.wake();
+        Ok((mark, len))
     }
 
     fn increment_write_mark(&self, max: usize) -> Result<(usize, usize), BufferError> {
-        let out = self.increment_mark(&self.write_mark, &self.read_mark, max);
-        if out.is_ok() {
-            self.read_waker.wake();
+        let (mark, mut len) = self.increment_mark(&self.write_mark, &self.read_mark, max)?;
+        if len == self.buffer.len()
+            && !self
+                .can_write
+                .swap(false, std::sync::atomic::Ordering::AcqRel)
+        {
+            len = 0;
         }
-        out
+        self.read_waker.wake();
+        Ok((mark, len))
     }
 
     fn increment_mark(
@@ -63,13 +76,16 @@ impl AtomicByteBuffer {
         let mti = mark_to_increment.load(std::sync::atomic::Ordering::Acquire);
         let um = until_mark.load(std::sync::atomic::Ordering::Relaxed);
 
-        let mut moved = mti.abs_diff(um) - 1;
-        if um < mti {
-            moved = self.buffer.len() - moved - 2;
+        let mut distance = mti.abs_diff(um);
+        if um <= mti {
+            distance = self.buffer.len() - distance;
         }
-        moved = std::cmp::min(moved, max);
+        distance = std::cmp::min(distance, max);
+        if distance == self.bit_mask + 1 {
+            return Ok((mti, distance));
+        }
 
-        let new_mark = (mti + moved) & self.bit_mask;
+        let new_mark = (mti + distance) & self.bit_mask;
 
         match mark_to_increment.compare_exchange_weak(
             mti,
@@ -77,13 +93,13 @@ impl AtomicByteBuffer {
             std::sync::atomic::Ordering::Release,
             std::sync::atomic::Ordering::Relaxed,
         ) {
-            Ok(old_mark) => Ok(((old_mark + 1) & self.bit_mask, moved)),
+            Ok(old_mark) => Ok((old_mark, distance)),
             Err(_) => Err(BufferError::NoProgress),
         }
     }
 }
 
-impl AsyncWrite for &AtomicByteBuffer {
+impl AsyncWrite for &RingBuffer {
     fn poll_write(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -109,7 +125,7 @@ impl AsyncWrite for &AtomicByteBuffer {
     }
 }
 
-impl AsyncWrite for AtomicByteBuffer {
+impl AsyncWrite for RingBuffer {
     fn poll_write(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -127,7 +143,7 @@ impl AsyncWrite for AtomicByteBuffer {
     }
 }
 
-impl Write for &AtomicByteBuffer {
+impl Write for &RingBuffer {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         match self.increment_write_mark(buf.len()) {
             Ok((mark, len)) => {
@@ -153,7 +169,7 @@ impl Write for &AtomicByteBuffer {
     }
 }
 
-impl Write for AtomicByteBuffer {
+impl Write for RingBuffer {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         (&*self).write(buf)
     }
@@ -163,7 +179,7 @@ impl Write for AtomicByteBuffer {
     }
 }
 
-impl AsyncRead for &AtomicByteBuffer {
+impl AsyncRead for &RingBuffer {
     fn poll_read(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -181,7 +197,7 @@ impl AsyncRead for &AtomicByteBuffer {
     }
 }
 
-impl AsyncRead for AtomicByteBuffer {
+impl AsyncRead for RingBuffer {
     fn poll_read(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -191,7 +207,7 @@ impl AsyncRead for AtomicByteBuffer {
     }
 }
 
-impl Read for &AtomicByteBuffer {
+impl Read for &RingBuffer {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         let buffer = &self.buffer;
         match self.increment_read_mark(buf.len()) {
@@ -212,7 +228,7 @@ impl Read for &AtomicByteBuffer {
     }
 }
 
-impl Read for AtomicByteBuffer {
+impl Read for RingBuffer {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         (&*self).read(buf)
     }
@@ -231,7 +247,7 @@ mod tests {
 
     #[test]
     fn test_ring_buffer_write_longer_buffer() {
-        let mut buffer = AtomicByteBuffer::new(255);
+        let mut buffer = RingBuffer::new(256);
         let input = vec![1; 512];
         let result = buffer.write(&input);
 
@@ -243,7 +259,7 @@ mod tests {
 
     #[test]
     fn test_ring_buffer_write_shorter_buffer() {
-        let mut buffer = AtomicByteBuffer::new(255);
+        let mut buffer = RingBuffer::new(256);
         let input = vec![1; 30];
         let result = buffer.write(&input);
 
@@ -255,7 +271,7 @@ mod tests {
 
     #[test]
     fn test_ring_buffer_read_longer_buffer() {
-        let mut buffer = AtomicByteBuffer::new(255);
+        let mut buffer = RingBuffer::new(256);
         buffer.buffer = vec![1; 256];
         buffer.read_mark.store(255, Ordering::SeqCst);
         buffer.write_mark.store(254, Ordering::SeqCst);
@@ -271,7 +287,7 @@ mod tests {
 
     #[test]
     fn test_ring_buffer_read_shorter_buffer() {
-        let mut buffer = AtomicByteBuffer::new(255);
+        let mut buffer = RingBuffer::new(256);
         buffer.buffer = vec![1; 256];
         buffer.read_mark.store(255, Ordering::SeqCst);
         buffer.write_mark.store(254, Ordering::SeqCst);
@@ -283,5 +299,26 @@ mod tests {
         assert_eq!(buffer.write_mark.load(Ordering::SeqCst), 254);
         assert_eq!(output, vec![1; 30]);
         assert!(matches!(result, Ok(30)));
+    }
+
+    #[test]
+    fn test_ring_buffer_read_write() {
+        let input = (0..128).collect::<Vec<u8>>();
+        let mut output = vec![0; 128];
+
+        let buffer = RingBuffer::new(16);
+
+        let mut read_mark = 0;
+        let mut write_mark = 0;
+        loop {
+            println!("After read: {:#?}", &buffer);
+            read_mark += (&buffer).write(&input[read_mark..]).unwrap();
+            println!("After write: {:#?}", &buffer);
+            write_mark += (&buffer).read(&mut output[write_mark..]).unwrap();
+            if write_mark == input.len() {
+                break;
+            }
+        }
+        assert_eq!(input, output);
     }
 }
