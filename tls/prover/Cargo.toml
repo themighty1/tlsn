@@ -8,4 +8,5 @@ edition = "2021"
 [dependencies]
 futures.workspace = true
 tlsn-tls-client = { path = "../tls-client" }
+tlsn-utils-aio = { path = "../../utils/utils-aio" }
 thiserror.workspace = true
