@@ -29,9 +29,9 @@ impl Prover {
                 // Pull requests from the request buffer
                 self.tls_connection.read_tls(&mut self.tcp_stream)?;
                 self.tls_connection.process_new_packets().await?;
-                //                self.tls_connection
-                //                    .reader()
-                //                    .read_to_end(self.buffer.request_buffer())?;
+                self.tls_connection
+                    .reader()
+                    .read_to_end(self.buffer.request_buffer())?;
 
                 // Push responses into the response buffer
                 //self.tls_connection
