@@ -99,6 +99,7 @@ impl RingBuffer {
         if until_mark <= mark_to_increment {
             distance = self.buffer.len() - distance;
         }
+        println!("distance: {}, max: {}", distance, max);
         std::cmp::min(distance, max)
     }
 }
@@ -425,13 +426,12 @@ mod tests {
     async fn test_ring_buffer_async() {
         let input = (0..128).collect::<Vec<u8>>();
         let mut output = vec![0; 128];
-        let mut buffer = RingBuffer::new(256);
-        let mut pin_buffer = Pin::new(&mut buffer);
+        let mut buffer: &'static RingBuffer = Box::leak(Box::new(RingBuffer::new(256)));
 
         let fut_write = tokio::spawn(async move {
             let mut write_mark = 0;
             loop {
-                match futures::AsyncWriteExt::write(&mut pin_buffer, &input[write_mark..]).await {
+                match futures::AsyncWriteExt::write(&mut buffer, &input[write_mark..]).await {
                     Ok(len) => write_mark += len,
                     Err(_) => continue,
                 }
@@ -440,10 +440,11 @@ mod tests {
                 }
             }
         });
+
         let fut_read = tokio::spawn(async move {
             let mut read_mark = 0;
             loop {
-                match futures::AsyncReadExt::read(&mut pin_buffer, &mut output[read_mark..]).await {
+                match futures::AsyncReadExt::read(&mut buffer, &mut output[read_mark..]).await {
                     Ok(len) => read_mark += len,
                     Err(_) => continue,
                 }
