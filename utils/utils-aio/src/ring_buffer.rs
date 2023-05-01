@@ -16,13 +16,11 @@ pub struct RingBuffer {
     can_write: AtomicBool,
     read_waker: AtomicWaker,
     write_waker: AtomicWaker,
-    bit_mask: usize,
 }
 
 impl RingBuffer {
     pub fn new(size: usize) -> Self {
         let optimized_size = size.next_power_of_two();
-        let bit_mask = optimized_size - 1;
         Self {
             buffer: vec![0; optimized_size],
             read_mark: AtomicUsize::new(0),
@@ -30,7 +28,6 @@ impl RingBuffer {
             can_write: AtomicBool::new(true),
             read_waker: AtomicWaker::new(),
             write_waker: AtomicWaker::new(),
-            bit_mask,
         }
     }
 
@@ -42,15 +39,12 @@ impl RingBuffer {
     }
 
     fn increment_read_mark(&self, max: usize) -> Result<(usize, usize), BufferError> {
-        let read_mark = self.read_mark.load(std::sync::atomic::Ordering::Relaxed);
-        let write_mark = self.write_mark.load(std::sync::atomic::Ordering::Acquire);
+        let read_mark = self.read_mark.load(std::sync::atomic::Ordering::Acquire);
+        let write_mark = self.write_mark.load(std::sync::atomic::Ordering::Relaxed);
 
         if read_mark == write_mark {
-            if !self
-                .can_write
-                .swap(true, std::sync::atomic::Ordering::AcqRel)
-            {
-                if max > self.buffer.len() {
+            if !self.can_write.load(std::sync::atomic::Ordering::Acquire) {
+                if max >= self.buffer.len() {
                     return Ok((read_mark, self.buffer.len()));
                 }
             } else {
@@ -59,7 +53,7 @@ impl RingBuffer {
         }
 
         let distance = self.compute_distance(read_mark, write_mark, max);
-        let new_mark = (read_mark + distance) & self.bit_mask;
+        let new_mark = (read_mark + distance) & (self.buffer.len() - 1);
 
         match self.read_mark.compare_exchange_weak(
             read_mark,
@@ -67,13 +61,7 @@ impl RingBuffer {
             std::sync::atomic::Ordering::Release,
             std::sync::atomic::Ordering::Relaxed,
         ) {
-            Ok(old_mark) => {
-                if new_mark == write_mark {
-                    self.can_write
-                        .store(true, std::sync::atomic::Ordering::Release);
-                }
-                Ok((old_mark, distance))
-            }
+            Ok(old_mark) => Ok((old_mark, distance)),
             Err(_) => Err(BufferError::NoProgress),
         }
     }
@@ -83,11 +71,8 @@ impl RingBuffer {
         let read_mark = self.read_mark.load(std::sync::atomic::Ordering::Relaxed);
 
         if write_mark == read_mark {
-            if self
-                .can_write
-                .swap(false, std::sync::atomic::Ordering::AcqRel)
-            {
-                if max > self.buffer.len() {
+            if self.can_write.load(std::sync::atomic::Ordering::Acquire) {
+                if max >= self.buffer.len() {
                     return Ok((write_mark, self.buffer.len()));
                 }
             } else {
@@ -96,7 +81,7 @@ impl RingBuffer {
         }
 
         let distance = self.compute_distance(write_mark, read_mark, max);
-        let new_mark = (write_mark + distance) & self.bit_mask;
+        let new_mark = (write_mark + distance) & (self.buffer.len() - 1);
 
         match self.write_mark.compare_exchange_weak(
             write_mark,
@@ -104,13 +89,7 @@ impl RingBuffer {
             std::sync::atomic::Ordering::Release,
             std::sync::atomic::Ordering::Relaxed,
         ) {
-            Ok(old_mark) => {
-                if new_mark == read_mark {
-                    self.can_write
-                        .store(false, std::sync::atomic::Ordering::Release);
-                }
-                Ok((old_mark, distance))
-            }
+            Ok(old_mark) => Ok((old_mark, distance)),
             Err(_) => Err(BufferError::NoProgress),
         }
     }
@@ -130,11 +109,14 @@ impl AsyncWrite for &RingBuffer {
         cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<Result<usize, Error>> {
-        let atomic_byte_buffer = Pin::into_inner(self);
-        match Write::write(atomic_byte_buffer, buf) {
-            Ok(len) => Poll::Ready(Ok(len)),
+        let byte_buffer = Pin::into_inner(self);
+        match Write::write(byte_buffer, buf) {
+            Ok(len) => {
+                byte_buffer.read_waker.wake();
+                Poll::Ready(Ok(len))
+            }
             Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
-                atomic_byte_buffer.write_waker.register(cx.waker());
+                byte_buffer.write_waker.register(cx.waker());
                 Poll::Pending
             }
             _ => unreachable!(),
@@ -180,6 +162,8 @@ impl Write for &RingBuffer {
                     _ = (&mut buffer[mark..]).write(buf);
                     _ = (&mut buffer[..len - (buffer_len - mark)]).write(buf);
                 }
+                self.can_write
+                    .store(false, std::sync::atomic::Ordering::Release);
                 Ok(len)
             }
             Err(BufferError::NoProgress) => Err(std::io::Error::new(
@@ -210,11 +194,14 @@ impl AsyncRead for &RingBuffer {
         cx: &mut Context<'_>,
         buf: &mut [u8],
     ) -> Poll<Result<usize, Error>> {
-        let atomic_byte_buffer = Pin::into_inner(self);
-        match Read::read(atomic_byte_buffer, buf) {
-            Ok(len) => Poll::Ready(Ok(len)),
+        let byte_buffer = Pin::into_inner(self);
+        match Read::read(byte_buffer, buf) {
+            Ok(len) => {
+                byte_buffer.write_waker.wake();
+                Poll::Ready(Ok(len))
+            }
             Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
-                atomic_byte_buffer.read_waker.register(cx.waker());
+                byte_buffer.read_waker.register(cx.waker());
                 Poll::Pending
             }
             _ => unreachable!(),
@@ -243,6 +230,8 @@ impl Read for &RingBuffer {
                     _ = (&buffer[mark..]).read(buf);
                     _ = (&buffer[..len - (buffer.len() - mark)]).read(buf);
                 }
+                self.can_write
+                    .store(true, std::sync::atomic::Ordering::Release);
                 Ok(len)
             }
             Err(BufferError::NoProgress) => Err(std::io::Error::new(
@@ -359,6 +348,111 @@ mod tests {
                 break;
             }
         }
+        assert_eq!(input, output);
+    }
+
+    #[test]
+    fn test_ring_buffer_multi_thread_short() {
+        let input = (0..128).collect::<Vec<u8>>();
+        let mut output = vec![0; 128];
+        let buffer = RingBuffer::new(32);
+
+        std::thread::scope(|s| {
+            s.spawn(|| {
+                let mut write_mark = 0;
+                loop {
+                    match (&buffer).write(&input[write_mark..]) {
+                        Ok(len) => write_mark += len,
+                        Err(_) => continue,
+                    }
+                    if write_mark == input.len() {
+                        break;
+                    }
+                }
+            });
+            s.spawn(|| {
+                let mut read_mark = 0;
+                loop {
+                    match (&buffer).read(&mut output[read_mark..]) {
+                        Ok(len) => read_mark += len,
+                        Err(_) => continue,
+                    }
+                    if read_mark == output.len() {
+                        break;
+                    }
+                }
+            });
+        });
+        assert_eq!(input, output);
+    }
+
+    #[test]
+    fn test_ring_buffer_multi_thread_long() {
+        let input = (0..128).collect::<Vec<u8>>();
+        let mut output = vec![0; 128];
+        let buffer = RingBuffer::new(256);
+
+        std::thread::scope(|s| {
+            s.spawn(|| {
+                let mut write_mark = 0;
+                loop {
+                    match (&buffer).write(&input[write_mark..]) {
+                        Ok(len) => write_mark += len,
+                        Err(_) => continue,
+                    }
+                    if write_mark == input.len() {
+                        break;
+                    }
+                }
+            });
+            s.spawn(|| {
+                let mut read_mark = 0;
+                loop {
+                    match (&buffer).read(&mut output[read_mark..]) {
+                        Ok(len) => read_mark += len,
+                        Err(_) => continue,
+                    }
+                    if read_mark == output.len() {
+                        break;
+                    }
+                }
+            });
+        });
+        assert_eq!(input, output);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_ring_buffer_async() {
+        let input = (0..128).collect::<Vec<u8>>();
+        let mut output = vec![0; 128];
+        let mut buffer = RingBuffer::new(256);
+        let mut pin_buffer = Pin::new(&mut buffer);
+
+        let fut_write = tokio::spawn(async move {
+            let mut write_mark = 0;
+            loop {
+                match futures::AsyncWriteExt::write(&mut pin_buffer, &input[write_mark..]).await {
+                    Ok(len) => write_mark += len,
+                    Err(_) => continue,
+                }
+                if write_mark == input.len() {
+                    break input;
+                }
+            }
+        });
+        let fut_read = tokio::spawn(async move {
+            let mut read_mark = 0;
+            loop {
+                match futures::AsyncReadExt::read(&mut pin_buffer, &mut output[read_mark..]).await {
+                    Ok(len) => read_mark += len,
+                    Err(_) => continue,
+                }
+                if read_mark == output.len() {
+                    break output;
+                }
+            }
+        });
+        let (input, output) = tokio::try_join!(fut_write, fut_read).unwrap();
         assert_eq!(input, output);
     }
 }
