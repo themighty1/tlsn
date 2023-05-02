@@ -99,7 +99,6 @@ impl RingBuffer {
         if until_mark <= mark_to_increment {
             distance = self.buffer.len() - distance;
         }
-        println!("distance: {}, max: {}", distance, max);
         std::cmp::min(distance, max)
     }
 }
@@ -111,15 +110,14 @@ impl AsyncWrite for &RingBuffer {
         buf: &[u8],
     ) -> Poll<Result<usize, Error>> {
         let byte_buffer = Pin::into_inner(self);
+        byte_buffer.write_waker.register(cx.waker());
+
         match Write::write(byte_buffer, buf) {
             Ok(len) => {
                 byte_buffer.read_waker.wake();
                 Poll::Ready(Ok(len))
             }
-            Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
-                byte_buffer.write_waker.register(cx.waker());
-                Poll::Pending
-            }
+            Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => Poll::Pending,
             _ => unreachable!(),
         }
     }
@@ -196,15 +194,14 @@ impl AsyncRead for &RingBuffer {
         buf: &mut [u8],
     ) -> Poll<Result<usize, Error>> {
         let byte_buffer = Pin::into_inner(self);
+        byte_buffer.read_waker.register(cx.waker());
+
         match Read::read(byte_buffer, buf) {
             Ok(len) => {
                 byte_buffer.write_waker.wake();
                 Poll::Ready(Ok(len))
             }
-            Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
-                byte_buffer.read_waker.register(cx.waker());
-                Poll::Pending
-            }
+            Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => Poll::Pending,
             _ => unreachable!(),
         }
     }
@@ -389,37 +386,39 @@ mod tests {
 
     #[test]
     fn test_ring_buffer_multi_thread_long() {
-        let input = (0..128).collect::<Vec<u8>>();
-        let mut output = vec![0; 128];
-        let buffer = RingBuffer::new(256);
+        loop {
+            let input = (0..128).collect::<Vec<u8>>();
+            let mut output = vec![0; 128];
+            let buffer = RingBuffer::new(256);
 
-        std::thread::scope(|s| {
-            s.spawn(|| {
-                let mut write_mark = 0;
-                loop {
-                    match (&buffer).write(&input[write_mark..]) {
-                        Ok(len) => write_mark += len,
-                        Err(_) => continue,
+            std::thread::scope(|s| {
+                s.spawn(|| {
+                    let mut write_mark = 0;
+                    loop {
+                        match (&buffer).write(&input[write_mark..]) {
+                            Ok(len) => write_mark += len,
+                            Err(_) => continue,
+                        }
+                        if write_mark == input.len() {
+                            break;
+                        }
                     }
-                    if write_mark == input.len() {
-                        break;
+                });
+                s.spawn(|| {
+                    let mut read_mark = 0;
+                    loop {
+                        match (&buffer).read(&mut output[read_mark..]) {
+                            Ok(len) => read_mark += len,
+                            Err(_) => continue,
+                        }
+                        if read_mark == output.len() {
+                            break;
+                        }
                     }
-                }
+                });
             });
-            s.spawn(|| {
-                let mut read_mark = 0;
-                loop {
-                    match (&buffer).read(&mut output[read_mark..]) {
-                        Ok(len) => read_mark += len,
-                        Err(_) => continue,
-                    }
-                    if read_mark == output.len() {
-                        break;
-                    }
-                }
-            });
-        });
-        assert_eq!(input, output);
+            assert_eq!(input, output);
+        }
     }
 
     #[tokio::test(flavor = "multi_thread")]
