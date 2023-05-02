@@ -13,7 +13,6 @@ pub struct RingBuffer {
     buffer: Vec<u8>,
     read_mark: AtomicUsize,
     write_mark: AtomicUsize,
-    can_write: AtomicBool,
     read_waker: AtomicWaker,
     write_waker: AtomicWaker,
 }
@@ -25,7 +24,6 @@ impl RingBuffer {
             buffer: vec![0; optimized_size],
             read_mark: AtomicUsize::new(0),
             write_mark: AtomicUsize::new(0),
-            can_write: AtomicBool::new(true),
             read_waker: AtomicWaker::new(),
             write_waker: AtomicWaker::new(),
         }
@@ -38,60 +36,37 @@ impl RingBuffer {
         }
     }
 
-    fn increment_read_mark(&self, max: usize) -> Result<(usize, usize), BufferError> {
-        let read_mark = self.read_mark.load(std::sync::atomic::Ordering::Acquire);
+    fn compute_new_read_mark(&self, max: usize) -> Result<(usize, usize, usize), BufferError> {
+        let read_mark = self.read_mark.load(std::sync::atomic::Ordering::Relaxed);
         let write_mark = self.write_mark.load(std::sync::atomic::Ordering::Relaxed);
 
         if read_mark == write_mark {
-            if !self.can_write.load(std::sync::atomic::Ordering::Acquire) {
-                if max >= self.buffer.len() {
-                    return Ok((read_mark, self.buffer.len()));
-                }
-            } else {
-                return Err(BufferError::NoProgress);
-            }
+            return Err(BufferError::NoProgress);
         }
 
         let distance = self.compute_distance(read_mark, write_mark, max);
         let new_mark = (read_mark + distance) & (self.buffer.len() - 1);
 
-        match self.read_mark.compare_exchange_weak(
-            read_mark,
-            new_mark,
-            std::sync::atomic::Ordering::Release,
-            std::sync::atomic::Ordering::Relaxed,
-        ) {
-            Ok(old_mark) => Ok((old_mark, distance)),
-            Err(_) => Err(BufferError::NoProgress),
-        }
+        Ok((read_mark, new_mark, distance))
     }
 
-    fn increment_write_mark(&self, max: usize) -> Result<(usize, usize), BufferError> {
-        let write_mark = self.write_mark.load(std::sync::atomic::Ordering::Acquire);
+    fn compute_new_write_mark(&self, max: usize) -> Result<(usize, usize, usize), BufferError> {
+        let write_mark = self.write_mark.load(std::sync::atomic::Ordering::Relaxed);
         let read_mark = self.read_mark.load(std::sync::atomic::Ordering::Relaxed);
 
-        if write_mark == read_mark {
-            if self.can_write.load(std::sync::atomic::Ordering::Acquire) {
-                if max >= self.buffer.len() {
-                    return Ok((write_mark, self.buffer.len()));
-                }
-            } else {
-                return Err(BufferError::NoProgress);
-            }
+        if (write_mark + 1) & (self.buffer.len() - 1) == read_mark {
+            return Err(BufferError::NoProgress);
         }
 
-        let distance = self.compute_distance(write_mark, read_mark, max);
-        let new_mark = (write_mark + distance) & (self.buffer.len() - 1);
+        let mut distance = self.compute_distance(write_mark, read_mark, max);
+        let mut new_mark = (write_mark + distance) & (self.buffer.len() - 1);
 
-        match self.write_mark.compare_exchange_weak(
-            write_mark,
-            new_mark,
-            std::sync::atomic::Ordering::Release,
-            std::sync::atomic::Ordering::Relaxed,
-        ) {
-            Ok(old_mark) => Ok((old_mark, distance)),
-            Err(_) => Err(BufferError::NoProgress),
+        if new_mark == read_mark {
+            distance -= 1;
+            new_mark = (write_mark + distance) & (self.buffer.len() - 1);
         }
+
+        Ok((write_mark, new_mark, distance))
     }
 
     fn compute_distance(&self, mark_to_increment: usize, until_mark: usize, max: usize) -> usize {
@@ -151,18 +126,19 @@ impl AsyncWrite for RingBuffer {
 
 impl Write for &RingBuffer {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        match self.increment_write_mark(buf.len()) {
-            Ok((mark, len)) => {
+        match self.compute_new_write_mark(buf.len()) {
+            Ok((old_mark, new_mark, len)) => {
                 let buffer = unsafe { self.raw_mut() };
                 let buffer_len = buffer.len();
-                if mark + len <= buffer_len {
-                    _ = (&mut buffer[mark..mark + len]).write(buf);
+                if old_mark + len <= buffer_len {
+                    _ = (&mut buffer[old_mark..old_mark + len]).write(buf);
                 } else {
-                    _ = (&mut buffer[mark..]).write(buf);
-                    _ = (&mut buffer[..len - (buffer_len - mark)]).write(buf);
+                    _ = (&mut buffer[old_mark..]).write(buf);
+                    _ = (&mut buffer[..len - (buffer_len - old_mark)])
+                        .write(&buf[buffer_len - old_mark..]);
                 }
-                self.can_write
-                    .store(false, std::sync::atomic::Ordering::Release);
+                self.write_mark
+                    .store(new_mark, std::sync::atomic::Ordering::Relaxed);
                 Ok(len)
             }
             Err(BufferError::NoProgress) => Err(std::io::Error::new(
@@ -220,16 +196,17 @@ impl AsyncRead for RingBuffer {
 impl Read for &RingBuffer {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         let buffer = &self.buffer;
-        match self.increment_read_mark(buf.len()) {
-            Ok((mark, len)) => {
-                if mark + len <= buffer.len() {
-                    _ = (&buffer[mark..mark + len]).read(buf);
+        match self.compute_new_read_mark(buf.len()) {
+            Ok((old_mark, new_mark, len)) => {
+                if old_mark + len <= buffer.len() {
+                    _ = (&buffer[old_mark..old_mark + len]).read(buf);
                 } else {
-                    _ = (&buffer[mark..]).read(buf);
-                    _ = (&buffer[..len - (buffer.len() - mark)]).read(buf);
+                    _ = (&buffer[old_mark..]).read(buf);
+                    _ = (&buffer[..len - (buffer.len() - old_mark)])
+                        .read(&mut buf[buffer.len() - old_mark..]);
                 }
-                self.can_write
-                    .store(true, std::sync::atomic::Ordering::Release);
+                self.read_mark
+                    .store(new_mark, std::sync::atomic::Ordering::Relaxed);
                 Ok(len)
             }
             Err(BufferError::NoProgress) => Err(std::io::Error::new(
@@ -258,19 +235,19 @@ mod tests {
     use std::sync::atomic::Ordering;
 
     #[test]
-    fn test_ring_buffer_write_longer_buffer() {
+    fn test_ring_buffer_write_longer_input() {
         let mut buffer = RingBuffer::new(256);
         let input = vec![1; 512];
         let result = buffer.write(&input);
 
         assert_eq!(buffer.read_mark.load(Ordering::SeqCst), 0);
-        assert_eq!(buffer.write_mark.load(Ordering::SeqCst), 0);
-        assert_eq!(buffer.buffer, vec![1; 256]);
-        assert!(matches!(result, Ok(256)));
+        assert_eq!(buffer.write_mark.load(Ordering::SeqCst), 255);
+        assert_eq!(buffer.buffer, [vec![1; 255], vec![0]].concat());
+        assert!(matches!(result, Ok(255)));
     }
 
     #[test]
-    fn test_ring_buffer_write_shorter_buffer() {
+    fn test_ring_buffer_write_shorter_input() {
         let mut buffer = RingBuffer::new(256);
         let input = vec![1; 30];
         let result = buffer.write(&input);
@@ -282,31 +259,32 @@ mod tests {
     }
 
     #[test]
-    fn test_ring_buffer_read_longer_buffer() {
+    fn test_ring_buffer_read_longer_output() {
         let mut buffer = RingBuffer::new(256);
         buffer.buffer = vec![1; 256];
-        buffer.can_write.store(false, Ordering::SeqCst);
+        buffer.write_mark.store(255, Ordering::SeqCst);
 
         let mut output = vec![0; 512];
+
         let result = buffer.read(&mut output);
 
-        assert_eq!(buffer.read_mark.load(Ordering::SeqCst), 0);
-        assert_eq!(buffer.write_mark.load(Ordering::SeqCst), 0);
-        assert_eq!(output, [vec![1; 256], vec![0; 256]].concat().to_vec());
-        assert!(matches!(result, Ok(256)));
+        assert_eq!(buffer.read_mark.load(Ordering::SeqCst), 255);
+        assert_eq!(buffer.write_mark.load(Ordering::SeqCst), 255);
+        assert_eq!(output, [vec![1; 255], vec![0; 257]].concat().to_vec());
+        assert!(matches!(result, Ok(255)));
     }
 
     #[test]
-    fn test_ring_buffer_read_shorter_buffer() {
+    fn test_ring_buffer_read_shorter_output() {
         let mut buffer = RingBuffer::new(256);
         buffer.buffer = vec![1; 256];
-        buffer.can_write.store(false, Ordering::SeqCst);
+        buffer.write_mark.store(255, Ordering::SeqCst);
 
         let mut output = vec![0; 30];
         let result = buffer.read(&mut output);
 
         assert_eq!(buffer.read_mark.load(Ordering::SeqCst), 30);
-        assert_eq!(buffer.write_mark.load(Ordering::SeqCst), 0);
+        assert_eq!(buffer.write_mark.load(Ordering::SeqCst), 255);
         assert_eq!(output, vec![1; 30]);
         assert!(matches!(result, Ok(30)));
     }
@@ -357,25 +335,25 @@ mod tests {
 
         std::thread::scope(|s| {
             s.spawn(|| {
-                let mut write_mark = 0;
+                let mut write_counter = 0;
                 loop {
-                    match (&buffer).write(&input[write_mark..]) {
-                        Ok(len) => write_mark += len,
+                    match (&buffer).write(&input[write_counter..]) {
+                        Ok(len) => write_counter += len,
                         Err(_) => continue,
                     }
-                    if write_mark == input.len() {
+                    if write_counter == input.len() {
                         break;
                     }
                 }
             });
             s.spawn(|| {
-                let mut read_mark = 0;
+                let mut read_counter = 0;
                 loop {
-                    match (&buffer).read(&mut output[read_mark..]) {
-                        Ok(len) => read_mark += len,
+                    match (&buffer).read(&mut output[read_counter..]) {
+                        Ok(len) => read_counter += len,
                         Err(_) => continue,
                     }
-                    if read_mark == output.len() {
+                    if read_counter == output.len() {
                         break;
                     }
                 }
@@ -386,46 +364,79 @@ mod tests {
 
     #[test]
     fn test_ring_buffer_multi_thread_long() {
-        loop {
-            let input = (0..128).collect::<Vec<u8>>();
-            let mut output = vec![0; 128];
-            let buffer = RingBuffer::new(256);
+        let input = (0..128).collect::<Vec<u8>>();
+        let mut output = vec![0; 128];
+        let buffer = RingBuffer::new(256);
 
-            std::thread::scope(|s| {
-                s.spawn(|| {
-                    let mut write_mark = 0;
-                    loop {
-                        match (&buffer).write(&input[write_mark..]) {
-                            Ok(len) => write_mark += len,
-                            Err(_) => continue,
-                        }
-                        if write_mark == input.len() {
-                            break;
-                        }
+        std::thread::scope(|s| {
+            s.spawn(|| {
+                let mut write_counter = 0;
+                loop {
+                    match (&buffer).write(&input[write_counter..]) {
+                        Ok(len) => write_counter += len,
+                        Err(_) => continue,
                     }
-                });
-                s.spawn(|| {
-                    let mut read_mark = 0;
-                    loop {
-                        match (&buffer).read(&mut output[read_mark..]) {
-                            Ok(len) => read_mark += len,
-                            Err(_) => continue,
-                        }
-                        if read_mark == output.len() {
-                            break;
-                        }
+                    if write_counter == input.len() {
+                        break;
                     }
-                });
+                }
             });
-            assert_eq!(input, output);
-        }
+            s.spawn(|| {
+                let mut read_counter = 0;
+                loop {
+                    match (&buffer).read(&mut output[read_counter..]) {
+                        Ok(len) => read_counter += len,
+                        Err(_) => continue,
+                    }
+                    if read_counter == output.len() {
+                        break;
+                    }
+                }
+            });
+        });
+        assert_eq!(input, output);
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn test_ring_buffer_async() {
+    async fn test_ring_buffer_async_long() {
         let input = (0..128).collect::<Vec<u8>>();
         let mut output = vec![0; 128];
         let mut buffer: &'static RingBuffer = Box::leak(Box::new(RingBuffer::new(256)));
+
+        let fut_write = tokio::spawn(async move {
+            let mut write_mark = 0;
+            loop {
+                match futures::AsyncWriteExt::write(&mut buffer, &input[write_mark..]).await {
+                    Ok(len) => write_mark += len,
+                    Err(_) => continue,
+                }
+                if write_mark == input.len() {
+                    break input;
+                }
+            }
+        });
+
+        let fut_read = tokio::spawn(async move {
+            let mut read_mark = 0;
+            loop {
+                match futures::AsyncReadExt::read(&mut buffer, &mut output[read_mark..]).await {
+                    Ok(len) => read_mark += len,
+                    Err(_) => continue,
+                }
+                if read_mark == output.len() {
+                    break output;
+                }
+            }
+        });
+        let (input, output) = tokio::try_join!(fut_write, fut_read).unwrap();
+        assert_eq!(input, output);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_ring_buffer_async_short() {
+        let input = (0..128).collect::<Vec<u8>>();
+        let mut output = vec![0; 128];
+        let mut buffer: &'static RingBuffer = Box::leak(Box::new(RingBuffer::new(32)));
 
         let fut_write = tokio::spawn(async move {
             let mut write_mark = 0;
