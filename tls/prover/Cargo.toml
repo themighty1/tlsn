@@ -11,3 +11,10 @@ tlsn-tls-client = { path = "../tls-client" }
 tlsn-utils-aio = { path = "../../utils/utils-aio" }
 thiserror.workspace = true
 webpki-roots.workspace = true
+
+[features]
+default = ["standard"]
+standard = []
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread"] }
