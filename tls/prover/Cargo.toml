@@ -10,3 +10,4 @@ futures.workspace = true
 tlsn-tls-client = { path = "../tls-client" }
 tlsn-utils-aio = { path = "../../utils/utils-aio" }
 thiserror.workspace = true
+webpki-roots.workspace = true
