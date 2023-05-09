@@ -3,11 +3,7 @@ use futures::{
     channel::mpsc::{Receiver, Sender},
     SinkExt, StreamExt,
 };
-use std::{
-    io::{Read, Write},
-    net::TcpStream,
-    sync::Arc,
-};
+use std::{io::Read, net::TcpStream, sync::Arc};
 use tls_client::{client::InvalidDnsNameError, Backend, ClientConnection, ServerName};
 
 mod config;
@@ -26,7 +22,7 @@ where
 
 impl<T> Prover<T>
 where
-    T: From<Vec<u8>> + Into<Vec<u8>>,
+    T: From<Vec<u8>> + Into<Vec<u8>> + std::fmt::Debug,
 {
     pub fn new(config: ProverConfig, url: String, socket: TcpStream) -> Result<Self, ProverError> {
         let backend = Box::new(tls_client::TLSNBackend {});
@@ -81,25 +77,39 @@ where
     }
 
     // Caller needs to run future on executor
-    pub async fn run(mut self) -> Result<(), ProverError> {
-        loop {
-            // Push requests into the TCP stream
-            if let Some(request) = self.request_receiver.next().await {
-                self.tls_connection
-                    .write_all_plaintext(request.into().as_slice())
-                    .await?;
-                self.tls_connection.write_tls(&mut self.socket)?;
-            }
+    pub async fn run(&mut self) -> Result<(), ProverError> {
+        // TODO Currently two problems:
+        // 1. The `request_receiver.next()` call blocks if there is no request
+        // 2. For some reason `tls_connection.wants_write()` is always `false
+        println!("run run");
+        // Push requests into the TCP stream
+        if let Some(request) = self.request_receiver.next().await {
+            println!("write_all_plaintext: {:?}", request);
+            self.tls_connection
+                .write_all_plaintext(request.into().as_slice())
+                .await?;
+        }
 
-            // Pull responses from the TCP stream
-            let mut response = Vec::new();
+        println!("wants write: {}", self.tls_connection.wants_write());
+        if self.tls_connection.wants_write() {
+            let written = self.tls_connection.write_tls(&mut self.socket)?;
+            println!("Written {} bytes", written);
+        }
+
+        println!("wants read: {}", self.tls_connection.wants_read());
+        // Pull responses from the TCP stream
+        let mut response = Vec::new();
+        if self.tls_connection.wants_read() {
             self.tls_connection.read_tls(&mut self.socket)?;
             self.tls_connection.process_new_packets().await?;
             self.tls_connection.reader().read_to_end(&mut response)?;
-            if !response.is_empty() {
-                self.response_sender.send(response.into()).await?;
-            }
         }
+
+        if !response.is_empty() {
+            self.response_sender.send(response.into()).await?;
+        }
+        println!("return run");
+        Ok(())
     }
 }
 
@@ -120,21 +130,29 @@ pub enum ProverError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::select;
 
     #[tokio::test]
     async fn test_prover_run() {
-        let prover = Prover::<Vec<u8>>::new_with_standard(
+        let tcp_stream = std::net::TcpStream::connect("tlsnotary.org:443").unwrap();
+        tcp_stream.set_nonblocking(true).unwrap();
+
+        let mut prover = Prover::<Vec<u8>>::new_with_standard(
             ProverConfig::default(),
             "tlsnotary.org".to_string(),
-            std::net::TcpStream::connect("tlsnotary.org:443").unwrap(),
+            tcp_stream,
         )
         .unwrap();
-        let (request_channel, response_channel) = prover.take_channels().unwrap();
-        tokio::spawn(async move {
-            prover.run().await.unwrap();
+        let (mut request_channel, mut response_channel) = prover.take_channels().unwrap();
+        let run_loop = tokio::spawn(async move {
+            loop {
+                let out = prover.run().await;
+                println!("run loop: {:?}", out);
+            }
         });
-        request_channel.send(
-            br#"
+        let response = tokio::spawn(async move {
+            request_channel.send(
+            b"
                 GET / HTTP/2
                 Host: tlsnotary.org
                 User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/112.0
@@ -148,8 +166,18 @@ mod tests {
                 Sec-Fetch-Mode: navigate
                 Sec-Fetch-Site: none
                 Sec-Fetch-User: ?1
-                "#
+                "
             .to_vec(),
-        );
+        ).await.unwrap();
+            response_channel.next().await.unwrap()
+        });
+        select! {
+            _finished = run_loop => println!("run loop finished"),
+            finished = response => {
+                let response = finished.unwrap();
+                println!("Response: {:?}", response);
+                assert!(false);
+            }
+        }
     }
 }
