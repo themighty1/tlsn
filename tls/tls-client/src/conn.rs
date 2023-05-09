@@ -1117,7 +1117,7 @@ impl CommonState {
     }
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 pub(crate) trait State<ClientConnectionData>: Send + Sync {
     async fn start(
         self: Box<Self>,
