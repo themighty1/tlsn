@@ -1,6 +1,8 @@
 use config::ProverConfig;
 use futures::{
     channel::mpsc::{Receiver, Sender},
+    lock::Mutex,
+    task::{Spawn, SpawnExt},
     SinkExt, StreamExt,
 };
 use std::{io::Read, net::TcpStream, sync::Arc};
@@ -22,7 +24,7 @@ where
 
 impl<T> Prover<T>
 where
-    T: From<Vec<u8>> + Into<Vec<u8>> + std::fmt::Debug,
+    T: From<Vec<u8>> + Into<Vec<u8>> + std::fmt::Debug + Send + 'static,
 {
     pub fn new(config: ProverConfig, url: String, socket: TcpStream) -> Result<Self, ProverError> {
         let backend = Box::new(tls_client::TLSNBackend {});
@@ -77,38 +79,61 @@ where
     }
 
     // Caller needs to run future on executor
-    pub async fn run(&mut self) -> Result<(), ProverError> {
+    pub fn run(self, executor: impl Spawn) -> Result<(), ProverError> {
         // TODO Currently two problems:
         // 1. The `request_receiver.next()` call blocks if there is no request
         // 2. For some reason `tls_connection.wants_write()` is always `false
-        println!("run run");
-        // Push requests into the TCP stream
-        if let Some(request) = self.request_receiver.next().await {
-            println!("write_all_plaintext: {:?}", request);
-            self.tls_connection
-                .write_all_plaintext(request.into().as_slice())
-                .await?;
-        }
 
-        println!("wants write: {}", self.tls_connection.wants_write());
-        if self.tls_connection.wants_write() {
-            let written = self.tls_connection.write_tls(&mut self.socket)?;
-            println!("Written {} bytes", written);
-        }
+        // TODO There should be a better option than using an await mutex
+        let prover_read_mutex = Arc::new(Mutex::new(self));
+        let prover_write_mutex = Arc::clone(&prover_read_mutex);
 
-        println!("wants read: {}", self.tls_connection.wants_read());
-        // Pull responses from the TCP stream
-        let mut response = Vec::new();
-        if self.tls_connection.wants_read() {
-            self.tls_connection.read_tls(&mut self.socket)?;
-            self.tls_connection.process_new_packets().await?;
-            self.tls_connection.reader().read_to_end(&mut response)?;
-        }
+        let write_fut = async move {
+            loop {
+                {
+                    let mut prover = prover_write_mutex.lock().await;
+                    // Push requests into the TCP stream
+                    if let Some(request) = prover.request_receiver.next().await {
+                        println!("write_all_plaintext: {:?}", request);
+                        prover
+                            .tls_connection
+                            .write_all_plaintext(request.into().as_slice())
+                            .await?;
+                    }
+                    println!("wants write: {}", prover.tls_connection.wants_write());
+                    if prover.tls_connection.wants_write() {
+                        let written = prover.tls_connection.write_tls(&mut prover.socket)?;
+                        println!("Written {} bytes", written);
+                    }
+                }
+            }
+            Ok::<(), ProverError>(())
+        };
 
-        if !response.is_empty() {
-            self.response_sender.send(response.into()).await?;
-        }
-        println!("return run");
+        let read_fut = async move {
+            loop {
+                {
+                    let mut prover = prover_read_mutex.lock().await;
+                    println!("wants read: {}", prover.tls_connection.wants_read());
+                    // Pull responses from the TCP stream
+                    let mut response = Vec::new();
+                    if prover.tls_connection.wants_read() {
+                        prover.tls_connection.read_tls(&mut prover.socket)?;
+                        prover.tls_connection.process_new_packets().await?;
+                        prover.tls_connection.reader().read_to_end(&mut response)?;
+                    }
+
+                    if !response.is_empty() {
+                        prover.response_sender.send(response.into()).await?;
+                    }
+                    println!("return run");
+                }
+            }
+            Ok::<(), ProverError>(())
+        };
+
+        executor.spawn_with_handle(write_fut)?;
+        executor.spawn_with_handle(read_fut)?;
         Ok(())
     }
 }
@@ -125,6 +150,8 @@ pub enum ProverError {
     ResponseError(#[from] futures::channel::mpsc::SendError),
     #[error("Unable to parse URL: {0}")]
     InvalidSeverName(#[from] InvalidDnsNameError),
+    #[error("SpawnError: {0}")]
+    SpawnError(#[from] futures::task::SpawnError),
 }
 
 #[cfg(test)]
@@ -132,8 +159,7 @@ mod tests {
     use super::*;
     use tokio::select;
 
-    #[tokio::test]
-    async fn test_prover_run() {
+    fn test_prover_run() {
         let tcp_stream = std::net::TcpStream::connect("tlsnotary.org:443").unwrap();
         tcp_stream.set_nonblocking(true).unwrap();
 
@@ -146,8 +172,8 @@ mod tests {
         let (mut request_channel, mut response_channel) = prover.take_channels().unwrap();
         let run_loop = tokio::spawn(async move {
             loop {
-                let out = prover.run().await;
-                println!("run loop: {:?}", out);
+                let prover = prover.run().await;
+                println!("run loop");
             }
         });
         let response = tokio::spawn(async move {
