@@ -3,7 +3,7 @@ use futures::{
     channel::mpsc::{Receiver, Sender},
     lock::Mutex,
     task::{Spawn, SpawnExt},
-    SinkExt, StreamExt,
+    try_join, SinkExt, StreamExt,
 };
 use std::{io::Read, net::TcpStream, sync::Arc};
 use tls_client::{client::InvalidDnsNameError, Backend, ClientConnection, ServerName};
@@ -79,7 +79,7 @@ where
     }
 
     // Caller needs to run future on executor
-    pub fn run(self, executor: impl Spawn) -> Result<(), ProverError> {
+    pub fn run(self, executor: impl Spawn) {
         // TODO Currently two problems:
         // 1. The `request_receiver.next()` call blocks if there is no request
         // 2. For some reason `tls_connection.wants_write()` is always `false
@@ -87,23 +87,23 @@ where
         // TODO There should be a better option than using an await mutex
         let prover_read_mutex = Arc::new(Mutex::new(self));
         let prover_write_mutex = Arc::clone(&prover_read_mutex);
+        println!("At beginning of  prover run");
 
         let write_fut = async move {
             loop {
                 {
+                    println!("in write loop");
                     let mut prover = prover_write_mutex.lock().await;
+                    let mut socket = prover.socket.try_clone()?;
                     // Push requests into the TCP stream
                     if let Some(request) = prover.request_receiver.next().await {
-                        println!("write_all_plaintext: {:?}", request);
                         prover
                             .tls_connection
                             .write_all_plaintext(request.into().as_slice())
                             .await?;
                     }
-                    println!("wants write: {}", prover.tls_connection.wants_write());
                     if prover.tls_connection.wants_write() {
-                        let written = prover.tls_connection.write_tls(&mut prover.socket)?;
-                        println!("Written {} bytes", written);
+                        prover.tls_connection.write_tls(&mut socket)?;
                     }
                 }
             }
@@ -113,12 +113,13 @@ where
         let read_fut = async move {
             loop {
                 {
+                    println!("in read loop");
                     let mut prover = prover_read_mutex.lock().await;
-                    println!("wants read: {}", prover.tls_connection.wants_read());
+                    let mut socket = prover.socket.try_clone()?;
                     // Pull responses from the TCP stream
                     let mut response = Vec::new();
                     if prover.tls_connection.wants_read() {
-                        prover.tls_connection.read_tls(&mut prover.socket)?;
+                        prover.tls_connection.read_tls(&mut socket)?;
                         prover.tls_connection.process_new_packets().await?;
                         prover.tls_connection.reader().read_to_end(&mut response)?;
                     }
@@ -126,15 +127,14 @@ where
                     if !response.is_empty() {
                         prover.response_sender.send(response.into()).await?;
                     }
-                    println!("return run");
                 }
             }
             Ok::<(), ProverError>(())
         };
-
-        executor.spawn_with_handle(write_fut)?;
-        executor.spawn_with_handle(read_fut)?;
-        Ok(())
+        let fut = async {
+            try_join!(write_fut, read_fut).unwrap();
+        };
+        executor.spawn(fut).unwrap();
     }
 }
 
@@ -157,27 +157,26 @@ pub enum ProverError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio::select;
+    use tokio::runtime::Handle;
+    use utils_aio::executor::SpawnCompatExt;
 
-    fn test_prover_run() {
+    #[tokio::test]
+    async fn test_prover_run() {
+        let rt = Handle::current();
+
         let tcp_stream = std::net::TcpStream::connect("tlsnotary.org:443").unwrap();
-        tcp_stream.set_nonblocking(true).unwrap();
 
         let mut prover = Prover::<Vec<u8>>::new_with_standard(
             ProverConfig::default(),
-            "tlsnotary.org".to_string(),
+            String::from("tlsnotary.org"),
             tcp_stream,
         )
         .unwrap();
         let (mut request_channel, mut response_channel) = prover.take_channels().unwrap();
-        let run_loop = tokio::spawn(async move {
-            loop {
-                let prover = prover.run().await;
-                println!("run loop");
-            }
-        });
-        let response = tokio::spawn(async move {
-            request_channel.send(
+        prover.run(rt.compat());
+        println!("Started prover run loop");
+
+        request_channel.send(
             b"
                 GET / HTTP/2
                 Host: tlsnotary.org
@@ -195,15 +194,9 @@ mod tests {
                 "
             .to_vec(),
         ).await.unwrap();
-            response_channel.next().await.unwrap()
-        });
-        select! {
-            _finished = run_loop => println!("run loop finished"),
-            finished = response => {
-                let response = finished.unwrap();
-                println!("Response: {:?}", response);
-                assert!(false);
-            }
-        }
+        println!("Sent request");
+        let response = response_channel.select_next_some().await;
+        println!("Got response: {:?}", response);
+        assert!(false)
     }
 }
