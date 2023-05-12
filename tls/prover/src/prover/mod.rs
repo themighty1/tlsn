@@ -187,7 +187,7 @@ mod tests {
     use utils_aio::executor::SpawnCompatExt;
 
     #[tokio::test]
-    async fn test_prover_run() {
+    async fn test_prover_run_tls_notary() {
         let rt = Handle::current();
 
         let tcp_stream = std::net::TcpStream::connect("tlsnotary.org:443").unwrap();
@@ -203,23 +203,17 @@ mod tests {
 
         request_channel
             .send(
-                b"GET / HTTP/2\r\n\
+                b"GET / HTTP/1.1\r\n\
                 Host: tlsnotary.org\r\n\
                 User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/112.0\r\n\
                 Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8\r\n\
                 Accept-Language: en-US,en;q=0.5\r\n\
-                Accept-Encoding: gzip, deflate, br\r\n\
-                DNT: 1\r\n\
-                Connection: keep-alive\r\n\
-                Upgrade-Insecure-Requests: 1\r\n\
-                Sec-Fetch-Dest: document\r\n\
-                Sec-Fetch-Mode: navigate\r\n\
-                Sec-Fetch-Site: cross-site\r\n\
-                TE: trailers\r\n\r\n"
+                Accept-Encoding: identity\r\n\r\n"
                 .to_vec()).await.unwrap();
-        println!("Sent request");
-        let response = response_channel.select_next_some().await;
-        println!("Got response: {}", std::str::from_utf8(&response).unwrap());
+        loop {
+            let response = response_channel.select_next_some().await;
+            println!("Got response: {}", String::from_utf8_lossy(&response));
+        }
         assert!(false)
     }
 }
