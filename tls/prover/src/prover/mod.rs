@@ -71,33 +71,25 @@ where
 
     // Caller needs to run future on executor
     pub fn run(mut self, executor: impl Spawn) {
-        // TODO Currently two problems:
-        // 1. The `request_receiver.next()` call blocks if there is no request
-        // 2. For some reason `tls_connection.wants_write()` is always `false
-
-        // TODO There should be a better option than using an await mutex
         let mut sender = self.response_sender.take().unwrap();
         let mut receiver = self.request_receiver.take().unwrap();
         let prover_mutex = Arc::new(Mutex::new(self));
         let prover_mutex2 = Arc::clone(&prover_mutex);
         let prover_mutex3 = Arc::clone(&prover_mutex);
         let prover_mutex4 = Arc::clone(&prover_mutex);
-        println!("At beginning of prover run");
 
         let write_fut = async move {
             loop {
                 {
-                    println!("start of write loop");
-                    // Push requests into the TCP stream
                     if let Some(request) = receiver.next().await {
                         let mut prover = prover_mutex.lock().await;
                         prover
                             .tls_connection
                             .write_all_plaintext(request.into().as_slice())
                             .await?;
+                        println!("Wrote into tls backend");
                     }
                 }
-                println!("end of write loop");
             }
             Ok::<(), ProverError>(())
         };
@@ -105,14 +97,16 @@ where
         let write_tls_fut = async move {
             loop {
                 {
-                    println!("start of write tls loop");
+                    println!("Checking for want_write...");
                     let mut prover = prover_mutex2.lock().await;
                     let mut socket = prover.socket.try_clone()?;
+                    socket.set_nonblocking(true)?;
+                    //TODO: wants_write() is always false
                     if prover.tls_connection.wants_write() {
                         prover.tls_connection.write_tls(&mut socket)?;
+                        println!("Wrote into socket");
                     }
                 }
-                println!("end of write tls loop");
             }
             Ok::<(), ProverError>(())
         };
@@ -120,20 +114,19 @@ where
         let read_fut = async move {
             loop {
                 {
-                    println!("start of read loop");
                     let mut prover = prover_mutex3.lock().await;
                     let mut response = Vec::new();
                     match prover.tls_connection.reader().read_to_end(&mut response) {
-                        Ok(_) => {}
+                        Ok(_) => {
+                            println!("Read from tls backend")
+                        }
                         Err(e) if e.kind() == ErrorKind::WouldBlock => {}
                         Err(e) => return Err(e.into()),
                     }
                     if !response.is_empty() {
-                        println!("Sending response");
                         sender.send(response.into()).await?;
                     }
                 }
-                println!("end of read loop");
             }
             Ok::<(), ProverError>(())
         };
@@ -141,19 +134,20 @@ where
         let read_tls_fut = async move {
             loop {
                 {
-                    println!("start of read tls loop");
                     let mut prover = prover_mutex4.lock().await;
-                    println!("locked mutex");
                     let mut socket = prover.socket.try_clone()?;
-                    // Pull responses from the TCP stream
+                    socket.set_nonblocking(true)?;
                     if prover.tls_connection.wants_read() {
-                        println!("wants read");
-                        prover.tls_connection.read_tls(&mut socket)?;
-                        println!("did read");
+                        match prover.tls_connection.read_tls(&mut socket) {
+                            Ok(_) => {
+                                println!("Read from socket")
+                            }
+                            Err(e) if e.kind() == ErrorKind::WouldBlock => {}
+                            Err(e) => return Err(e.into()),
+                        }
                         prover.tls_connection.process_new_packets().await?;
                     }
                 }
-                println!("end of read tls loop");
             }
 
             Ok::<(), ProverError>(())
