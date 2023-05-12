@@ -1,12 +1,16 @@
 use config::ProverConfig;
 use futures::{
     channel::mpsc::{Receiver, Sender},
-    lock::Mutex,
     task::{Spawn, SpawnExt},
     try_join, SinkExt, StreamExt,
 };
-use std::{io::Read, net::TcpStream, sync::Arc};
+use std::{
+    io::{ErrorKind, Read},
+    net::TcpStream,
+    sync::Arc,
+};
 use tls_client::{client::InvalidDnsNameError, Backend, ClientConnection, ServerName};
+use tokio::sync::Mutex;
 
 mod config;
 
@@ -83,10 +87,10 @@ where
         let write_fut = async move {
             loop {
                 {
-                    println!("in write loop");
-                    let mut prover = prover_mutex.lock().await;
+                    println!("start of write loop");
                     // Push requests into the TCP stream
                     if let Some(request) = receiver.next().await {
+                        let mut prover = prover_mutex.lock().await;
                         prover
                             .tls_connection
                             .write_all_plaintext(request.into().as_slice())
@@ -101,7 +105,7 @@ where
         let write_tls_fut = async move {
             loop {
                 {
-                    println!("in write tls loop");
+                    println!("start of write tls loop");
                     let mut prover = prover_mutex2.lock().await;
                     let mut socket = prover.socket.try_clone()?;
                     if prover.tls_connection.wants_write() {
@@ -116,11 +120,16 @@ where
         let read_fut = async move {
             loop {
                 {
-                    println!("in read loop");
+                    println!("start of read loop");
                     let mut prover = prover_mutex3.lock().await;
                     let mut response = Vec::new();
-                    prover.tls_connection.reader().read_to_end(&mut response)?;
+                    match prover.tls_connection.reader().read_to_end(&mut response) {
+                        Ok(_) => {}
+                        Err(e) if e.kind() == ErrorKind::WouldBlock => {}
+                        Err(e) => return Err(e.into()),
+                    }
                     if !response.is_empty() {
+                        println!("Sending response");
                         sender.send(response.into()).await?;
                     }
                 }
@@ -132,12 +141,15 @@ where
         let read_tls_fut = async move {
             loop {
                 {
-                    println!("in read tls loop");
+                    println!("start of read tls loop");
                     let mut prover = prover_mutex4.lock().await;
+                    println!("locked mutex");
                     let mut socket = prover.socket.try_clone()?;
                     // Pull responses from the TCP stream
                     if prover.tls_connection.wants_read() {
+                        println!("wants read");
                         prover.tls_connection.read_tls(&mut socket)?;
+                        println!("did read");
                         prover.tls_connection.process_new_packets().await?;
                     }
                 }
@@ -146,10 +158,14 @@ where
 
             Ok::<(), ProverError>(())
         };
-        let fut = async {
-            try_join!(write_fut, write_tls_fut, read_fut, read_tls_fut).unwrap();
-        };
-        executor.spawn(fut).unwrap();
+        executor.spawn(async { write_fut.await.unwrap() }).unwrap();
+        executor
+            .spawn(async { write_tls_fut.await.unwrap() })
+            .unwrap();
+        executor.spawn(async { read_fut.await.unwrap() }).unwrap();
+        executor
+            .spawn(async { read_tls_fut.await.unwrap() })
+            .unwrap();
     }
 }
 
