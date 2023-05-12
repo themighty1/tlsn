@@ -77,6 +77,7 @@ where
         let prover_mutex2 = Arc::clone(&prover_mutex);
         let prover_mutex3 = Arc::clone(&prover_mutex);
         let prover_mutex4 = Arc::clone(&prover_mutex);
+        let prover_mutex5 = Arc::clone(&prover_mutex);
 
         let write_fut = async move {
             loop {
@@ -97,11 +98,9 @@ where
         let write_tls_fut = async move {
             loop {
                 {
-                    println!("Checking for want_write...");
                     let mut prover = prover_mutex2.lock().await;
                     let mut socket = prover.socket.try_clone()?;
                     socket.set_nonblocking(true)?;
-                    //TODO: wants_write() is always false
                     if prover.tls_connection.wants_write() {
                         prover.tls_connection.write_tls(&mut socket)?;
                         println!("Wrote into socket");
@@ -152,6 +151,10 @@ where
 
             Ok::<(), ProverError>(())
         };
+
+        let start_fut = async move { prover_mutex5.lock().await.tls_connection.start().await };
+
+        executor.spawn(async { start_fut.await.unwrap() }).unwrap();
         executor.spawn(async { write_fut.await.unwrap() }).unwrap();
         executor
             .spawn(async { write_tls_fut.await.unwrap() })
@@ -197,29 +200,26 @@ mod tests {
             )
             .unwrap();
         prover.run(rt.compat());
-        println!("Started prover run loop");
 
-        request_channel.send(
-            b"
-                GET / HTTP/2
-                Host: tlsnotary.org
-                User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/112.0
-                Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8
-                Accept-Language: en-US,en;q=0.5
-                Accept-Encoding: gzip, deflate, br
-                DNT: 1
-                Upgrade-Insecure-Requests: 1
-                Connection: keep-alive
-                Sec-Fetch-Dest: document
-                Sec-Fetch-Mode: navigate
-                Sec-Fetch-Site: none
-                Sec-Fetch-User: ?1
-                "
-            .to_vec(),
-        ).await.unwrap();
+        request_channel
+            .send(
+                b"GET / HTTP/2\r\n\
+                Host: tlsnotary.org\r\n\
+                User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/112.0\r\n\
+                Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8\r\n\
+                Accept-Language: en-US,en;q=0.5\r\n\
+                Accept-Encoding: gzip, deflate, br\r\n\
+                DNT: 1\r\n\
+                Connection: keep-alive\r\n\
+                Upgrade-Insecure-Requests: 1\r\n\
+                Sec-Fetch-Dest: document\r\n\
+                Sec-Fetch-Mode: navigate\r\n\
+                Sec-Fetch-Site: cross-site\r\n\
+                TE: trailers\r\n\r\n"
+                .to_vec()).await.unwrap();
         println!("Sent request");
         let response = response_channel.select_next_some().await;
-        println!("Got response: {:?}", response);
+        println!("Got response: {}", std::str::from_utf8(&response).unwrap());
         assert!(false)
     }
 }
