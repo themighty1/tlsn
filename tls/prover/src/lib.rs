@@ -27,17 +27,15 @@ where
 
 impl<T> Prover<T>
 where
-    T: From<Vec<u8>> + Into<Vec<u8>> + std::fmt::Debug + Send + 'static,
+    T: From<Vec<u8>> + Into<Vec<u8>> + Send + 'static,
 {
     pub fn new(
         config: ProverConfig,
         url: String,
         socket: TcpStream,
-    ) -> Result<(Arc<Self>, Sender<T>, Receiver<T>), ProverError> {
+    ) -> Result<(Self, Sender<T>, Receiver<T>), ProverError> {
         let backend = Box::new(tls_client::TLSNBackend {});
-        let (prover, request_sender, response_receiver) =
-            Self::new_with(config, url, backend, socket)?;
-        Ok((Arc::new(prover), request_sender, response_receiver))
+        Self::new_with(config, url, backend, socket)
     }
 
     #[cfg(feature = "standard")]
