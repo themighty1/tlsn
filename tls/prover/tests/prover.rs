@@ -29,14 +29,14 @@ async fn test_prover_run_parse_respone_headers() {
                 Accept-Encoding: identity\r\n\r\n"
                 .to_vec()).await.unwrap();
 
-    let mut response_header = Vec::new();
+    let mut response_headers = Vec::new();
     let headers_end_marker = b"\r\n\r\n";
 
     loop {
         let next_bytes = response_channel.select_next_some().await;
-        response_header.write(&next_bytes).unwrap();
+        response_headers.write(&next_bytes).unwrap();
 
-        if let Some(_) = response_header
+        if let Some(_) = response_headers
             .windows(headers_end_marker.len())
             .position(|window| window == headers_end_marker)
         {
@@ -44,6 +44,6 @@ async fn test_prover_run_parse_respone_headers() {
         }
     }
 
-    let parsed_headers = String::from_utf8(response_header).unwrap();
+    let parsed_headers = String::from_utf8(response_headers).unwrap();
     assert!(parsed_headers.contains("HTTP/1.1 200 OK\r\n"));
 }

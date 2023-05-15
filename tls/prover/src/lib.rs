@@ -19,8 +19,8 @@ pub struct Prover<T>
 where
     T: From<Vec<u8>> + Into<Vec<u8>>,
 {
-    tls_connection: ClientConnection,
-    socket: TcpStream,
+    tls_connection: Mutex<ClientConnection>,
+    socket: Mutex<TcpStream>,
     request_receiver: Option<Receiver<T>>,
     response_sender: Option<Sender<T>>,
 }
@@ -33,9 +33,11 @@ where
         config: ProverConfig,
         url: String,
         socket: TcpStream,
-    ) -> Result<(Self, Sender<T>, Receiver<T>), ProverError> {
+    ) -> Result<(Arc<Self>, Sender<T>, Receiver<T>), ProverError> {
         let backend = Box::new(tls_client::TLSNBackend {});
-        Self::new_with(config, url, backend, socket)
+        let (prover, request_sender, response_receiver) =
+            Self::new_with(config, url, backend, socket)?;
+        Ok((Arc::new(prover), request_sender, response_receiver))
     }
 
     #[cfg(feature = "standard")]
@@ -60,10 +62,11 @@ where
         let server_name = ServerName::try_from(url.as_str())?;
         let client_config = Arc::new(config.client_config);
         let tls_connection = ClientConnection::new(client_config, backend, server_name)?;
+        socket.set_nonblocking(true)?;
 
         let prover = Self {
-            tls_connection,
-            socket,
+            tls_connection: Mutex::new(tls_connection),
+            socket: Mutex::new(socket),
             request_receiver: Some(request_receiver),
             response_sender: Some(response_sender),
         };
@@ -72,98 +75,87 @@ where
 
     // Caller needs to run future on executor
     pub fn run(mut self, executor: impl Spawn) {
-        let mut sender = self.response_sender.take().unwrap();
-        let mut receiver = self.request_receiver.take().unwrap();
-        let prover_mutex = Arc::new(Mutex::new(self));
-        let prover_mutex2 = Arc::clone(&prover_mutex);
-        let prover_mutex3 = Arc::clone(&prover_mutex);
-        let prover_mutex4 = Arc::clone(&prover_mutex);
-        let prover_mutex5 = Arc::clone(&prover_mutex);
+        let response_sender = self
+            .response_sender
+            .take()
+            .expect("Prover is already running");
+        let request_receiver = self
+            .request_receiver
+            .take()
+            .expect("Prover is already running");
+        let prover = Arc::new(self);
 
-        let write_fut = async move {
-            loop {
-                {
-                    if let Some(request) = receiver.next().await {
-                        let mut prover = prover_mutex.lock().await;
-                        prover
-                            .tls_connection
-                            .write_all_plaintext(request.into().as_slice())
-                            .await?;
-                        println!("Wrote into tls backend");
-                    }
-                }
-            }
-            Ok::<(), ProverError>(())
-        };
-
-        let write_tls_fut = async move {
-            loop {
-                {
-                    let mut prover = prover_mutex2.lock().await;
-                    let mut socket = prover.socket.try_clone()?;
-                    socket.set_nonblocking(true)?;
-                    if prover.tls_connection.wants_write() {
-                        prover.tls_connection.write_tls(&mut socket)?;
-                        println!("Wrote into socket");
-                    }
-                }
-            }
-            Ok::<(), ProverError>(())
-        };
-
-        let read_fut = async move {
-            loop {
-                {
-                    let mut prover = prover_mutex3.lock().await;
-                    let mut response = Vec::new();
-                    match prover.tls_connection.reader().read_to_end(&mut response) {
-                        Ok(_) => {
-                            println!("Read from tls backend")
-                        }
-                        Err(e) if e.kind() == ErrorKind::WouldBlock => {}
-                        Err(e) => return Err(e.into()),
-                    }
-                    if !response.is_empty() {
-                        sender.send(response.into()).await?;
-                    }
-                }
-            }
-            Ok::<(), ProverError>(())
-        };
-
-        let read_tls_fut = async move {
-            loop {
-                {
-                    let mut prover = prover_mutex4.lock().await;
-                    let mut socket = prover.socket.try_clone()?;
-                    socket.set_nonblocking(true)?;
-                    if prover.tls_connection.wants_read() {
-                        match prover.tls_connection.read_tls(&mut socket) {
-                            Ok(_) => {
-                                println!("Read from socket")
-                            }
-                            Err(e) if e.kind() == ErrorKind::WouldBlock => {}
-                            Err(e) => return Err(e.into()),
-                        }
-                        prover.tls_connection.process_new_packets().await?;
-                    }
-                }
-            }
-
-            Ok::<(), ProverError>(())
-        };
-
-        let start_fut = async move { prover_mutex5.lock().await.tls_connection.start().await };
-
-        executor.spawn(async { start_fut.await.unwrap() }).unwrap();
-        executor.spawn(async { write_fut.await.unwrap() }).unwrap();
+        executor.spawn(prover.clone().handshake()).unwrap();
         executor
-            .spawn(async { write_tls_fut.await.unwrap() })
+            .spawn(prover.clone().write(request_receiver))
             .unwrap();
-        executor.spawn(async { read_fut.await.unwrap() }).unwrap();
+        executor.spawn(prover.clone().write_tls()).unwrap();
         executor
-            .spawn(async { read_tls_fut.await.unwrap() })
+            .spawn(prover.clone().read(response_sender))
             .unwrap();
+        executor.spawn(prover.clone().read_tls()).unwrap();
+    }
+
+    async fn handshake(self: Arc<Self>) {
+        self.tls_connection.lock().await.start().await.unwrap()
+    }
+
+    async fn write(self: Arc<Self>, mut request_receiver: Receiver<T>) {
+        loop {
+            if let Some(request) = request_receiver.next().await {
+                self.tls_connection
+                    .lock()
+                    .await
+                    .write_all_plaintext(request.into().as_slice())
+                    .await
+                    .unwrap();
+            }
+        }
+    }
+
+    async fn write_tls(self: Arc<Self>) {
+        loop {
+            let mut tls_connection = self.tls_connection.lock().await;
+            let mut socket = self.socket.lock().await;
+            if tls_connection.wants_write() {
+                tls_connection.write_tls(&mut *socket).unwrap();
+            }
+        }
+    }
+
+    async fn read(self: Arc<Self>, mut response_sender: Sender<T>) {
+        loop {
+            let mut response = Vec::new();
+            match self
+                .tls_connection
+                .lock()
+                .await
+                .reader()
+                .read_to_end(&mut response)
+            {
+                Ok(_) => {}
+                Err(e) if e.kind() == ErrorKind::WouldBlock => {}
+                err => panic!("{:?}", err),
+            }
+            if !response.is_empty() {
+                response_sender.send(response.into()).await.unwrap();
+            }
+        }
+    }
+
+    async fn read_tls(self: Arc<Self>) {
+        loop {
+            let mut tls_connection = self.tls_connection.lock().await;
+            let mut socket = self.socket.lock().await;
+            if tls_connection.wants_read() {
+                match tls_connection.read_tls(&mut *socket) {
+                    Ok(_) => {}
+                    Err(e) if e.kind() == ErrorKind::WouldBlock => {}
+                    err => panic!("{:?}", err),
+                }
+                tls_connection.process_new_packets().await.unwrap();
+            }
+        }
     }
 }
 
@@ -173,10 +165,6 @@ pub enum ProverError {
     TlsClientError(#[from] tls_client::Error),
     #[error("IO error: {0}")]
     IOError(#[from] std::io::Error),
-    #[error("Unable to deliver response")]
-    ResponseError(#[from] futures::channel::mpsc::SendError),
     #[error("Unable to parse URL: {0}")]
     InvalidSeverName(#[from] InvalidDnsNameError),
-    #[error("SpawnError: {0}")]
-    SpawnError(#[from] futures::task::SpawnError),
 }
