@@ -120,7 +120,6 @@ impl ChunkVecBuffer {
 
     /// Read data out of this object, passing it `wr`
     pub(crate) fn write_to(&mut self, wr: &mut dyn io::Write) -> io::Result<usize> {
-        println!("write_to");
         if self.is_empty() {
             return Ok(0);
         }
