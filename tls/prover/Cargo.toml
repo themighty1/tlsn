@@ -12,10 +12,7 @@ tlsn-utils-aio = { path = "../../utils/utils-aio" }
 thiserror.workspace = true
 webpki-roots.workspace = true
 tokio = { workspace = true, features = ["sync"] }
-
-[features]
-default = ["standard"]
-standard = []
+tokio-util = { workspace = true, features = ["io"] }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "time"] }
