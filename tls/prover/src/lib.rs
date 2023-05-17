@@ -1,7 +1,7 @@
 use futures::{
     channel::mpsc::{Receiver, Sender},
     task::{Spawn, SpawnExt},
-    SinkExt, StreamExt,
+    AsyncRead, AsyncWrite, Future, SinkExt, StreamExt,
 };
 use std::{
     io::{ErrorKind, Read},
@@ -12,63 +12,38 @@ use tls_client::{client::InvalidDnsNameError, Backend, ClientConnection, ServerN
 use tokio::sync::Mutex;
 
 mod config;
+mod socket;
 
 pub use config::ProverConfig;
 
-pub struct Prover<T>
-where
-    T: From<Vec<u8>> + Into<Vec<u8>>,
-{
-    tls_connection: Mutex<ClientConnection>,
-    socket: Mutex<TcpStream>,
-    request_receiver: Option<Receiver<T>>,
-    response_sender: Option<Sender<T>>,
+use self::socket::AsyncSocket;
+
+pub trait AsyncReadWrite: AsyncRead + AsyncWrite + Unpin + Send + Sync {}
+impl<T> AsyncReadWrite for T where T: AsyncRead + AsyncWrite + Unpin + Send + Sync {}
+
+pub struct Prover {
+    run_future: FnOnce() -> impl Future<Output = ()>,
 }
 
-impl<T> Prover<T>
-where
-    T: From<Vec<u8>> + Into<Vec<u8>> + Send + 'static,
-{
-    pub fn new(
-        config: ProverConfig,
-        url: String,
-        socket: TcpStream,
-    ) -> Result<(Self, Sender<T>, Receiver<T>), ProverError> {
-        let backend = Box::new(tls_client::TLSNBackend {});
-        Self::new_with(config, url, backend, socket)
-    }
-
-    #[cfg(feature = "standard")]
-    pub fn new_with_standard(
-        config: ProverConfig,
-        url: String,
-        socket: TcpStream,
-    ) -> Result<(Self, Sender<T>, Receiver<T>), ProverError> {
-        let backend = Box::new(tls_client::RustCryptoBackend::new());
-        Self::new_with(config, url, backend, socket)
-    }
-
-    fn new_with(
+impl Prover {
+    fn new(
         config: ProverConfig,
         url: String,
         backend: Box<dyn Backend>,
-        socket: TcpStream,
-    ) -> Result<(Self, Sender<T>, Receiver<T>), ProverError> {
+        socket: Box<dyn AsyncReadWrite>,
+    ) -> Result<(Self, AsyncSocket), ProverError> {
         let (request_sender, request_receiver) = futures::channel::mpsc::channel(10);
         let (response_sender, response_receiver) = futures::channel::mpsc::channel(10);
+
+        let async_socket = AsyncSocket::new(request_sender, response_receiver);
 
         let server_name = ServerName::try_from(url.as_str())?;
         let client_config = Arc::new(config.client_config);
         let tls_connection = ClientConnection::new(client_config, backend, server_name)?;
-        socket.set_nonblocking(true)?;
 
-        let prover = Self {
-            tls_connection: Mutex::new(tls_connection),
-            socket: Mutex::new(socket),
-            request_receiver: Some(request_receiver),
-            response_sender: Some(response_sender),
-        };
-        Ok((prover, request_sender, response_receiver))
+        self.run_future = async {};
+
+        Ok((prover, async_socket))
     }
 
     // Caller needs to run future on executor
@@ -98,7 +73,7 @@ where
         self.tls_connection.lock().await.start().await.unwrap()
     }
 
-    async fn write(self: Arc<Self>, mut request_receiver: Receiver<T>) {
+    async fn write(self: Arc<Self>, mut request_receiver: Receiver<Vec<u8>>) {
         loop {
             if let Some(request) = request_receiver.next().await {
                 self.tls_connection
@@ -159,10 +134,10 @@ where
 
 #[derive(Debug, thiserror::Error)]
 pub enum ProverError {
-    #[error("TLS client error: {0}")]
+    #[error(transparent)]
     TlsClientError(#[from] tls_client::Error),
-    #[error("IO error: {0}")]
+    #[error(transparent)]
     IOError(#[from] std::io::Error),
-    #[error("Unable to parse URL: {0}")]
+    #[error(transparent)]
     InvalidSeverName(#[from] InvalidDnsNameError),
 }

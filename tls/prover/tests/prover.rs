@@ -49,11 +49,11 @@ async fn test_prover_run_parse_response_body() {
     let content_length_header: &str = "Content-Length: ";
     let content_length_start =
         parsed_headers.find(content_length_header).unwrap() + content_length_header.len();
-    let content_length_end = parsed_headers[content_length_start..].find("\r\n").unwrap();
+    let content_length_len = parsed_headers[content_length_start..].find("\r\n").unwrap();
 
     // Now parse content length to usize
     let mut content_length = parsed_headers
-        [content_length_start..content_length_start + content_length_end]
+        [content_length_start..content_length_start + content_length_len]
         .parse::<usize>()
         .unwrap();
 
@@ -75,7 +75,9 @@ async fn test_prover_run_parse_response_body() {
     let parsed_body =
         parsed_headers.split_off(body_start) + &String::from_utf8(response_body).unwrap();
 
+    assert!(parsed_body.contains("<!DOCTYPE html>"));
     assert!(parsed_body.contains("TLSNotary is a public good"));
+    assert!(parsed_body.contains("</html>"));
 }
 
 fn tlsn_run(handle: Handle, address: &str) -> (Sender<Vec<u8>>, Receiver<Vec<u8>>) {
