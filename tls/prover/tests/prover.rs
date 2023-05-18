@@ -1,27 +1,24 @@
-use futures::{
-    channel::mpsc::{Receiver, Sender},
-    SinkExt, StreamExt,
-};
-use prover::{Prover, ProverConfig};
-use std::io::Write;
+use futures::{AsyncReadExt, AsyncWriteExt};
+use prover::{AsyncSocket, Prover, ProverConfig, ReadWrite};
+use tls_client::{Backend, RustCryptoBackend};
 use tokio::runtime::Handle;
 use utils_aio::executor::SpawnCompatExt;
 
 #[tokio::test]
 async fn test_prover_run_parse_response_headers() {
-    let (mut request_channel, mut response_channel) = tlsn_run(Handle::current(), "tlsnotary.org");
+    let mut async_socket = tlsn_run(Handle::current(), "tlsnotary.org");
 
-    request_channel
-            .send(
-                b"GET / HTTP/1.1\r\n\
-                Host: tlsnotary.org\r\n\
-                User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/112.0\r\n\
-                Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8\r\n\
-                Accept-Language: en-US,en;q=0.5\r\n\
-                Accept-Encoding: identity\r\n\r\n"
-                .to_vec()).await.unwrap();
+    async_socket
+            .write_all(
+                    b"GET / HTTP/1.1\r\n\
+                    Host: tlsnotary.org\r\n\
+                    User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/112.0\r\n\
+                    Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8\r\n\
+                    Accept-Language: en-US,en;q=0.5\r\n\
+                    Accept-Encoding: identity\r\n\r\n"
+                ).await.unwrap();
 
-    let response_headers = parse_response_headers(&mut response_channel).await;
+    let response_headers = parse_response_headers(&mut async_socket).await;
     let parsed_headers = String::from_utf8(response_headers).unwrap();
 
     assert!(parsed_headers.contains("HTTP/1.1 200 OK\r\n"));
@@ -29,20 +26,20 @@ async fn test_prover_run_parse_response_headers() {
 
 #[tokio::test]
 async fn test_prover_run_parse_response_body() {
-    let (mut request_channel, mut response_channel) = tlsn_run(Handle::current(), "tlsnotary.org");
+    let mut async_socket = tlsn_run(Handle::current(), "tlsnotary.org");
 
     // First we need to parse the response header again
-    request_channel
-            .send(
-                b"GET / HTTP/1.1\r\n\
-                Host: tlsnotary.org\r\n\
-                User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/112.0\r\n\
-                Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8\r\n\
-                Accept-Language: en-US,en;q=0.5\r\n\
-                Accept-Encoding: identity\r\n\r\n"
-                .to_vec()).await.unwrap();
+    async_socket
+            .write_all(
+                    b"GET / HTTP/1.1\r\n\
+                    Host: tlsnotary.org\r\n\
+                    User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/112.0\r\n\
+                    Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8\r\n\
+                    Accept-Language: en-US,en;q=0.5\r\n\
+                    Accept-Encoding: identity\r\n\r\n"
+                ).await.unwrap();
 
-    let response_headers = parse_response_headers(&mut response_channel).await;
+    let response_headers = parse_response_headers(&mut async_socket).await;
     let mut parsed_headers = String::from_utf8(response_headers).unwrap();
 
     // Extract content length from response headers
@@ -66,9 +63,8 @@ async fn test_prover_run_parse_response_body() {
     let mut response_body = Vec::new();
 
     while content_length > 0 {
-        let next_bytes = response_channel.select_next_some().await;
-        response_body.write_all(&next_bytes).unwrap();
-        content_length -= next_bytes.len();
+        let bytes_read = async_socket.read(&mut response_body).await.unwrap();
+        content_length -= bytes_read;
     }
 
     // Convert parsed bytes to utf8 and also add the header part which did include some body parts
@@ -80,27 +76,27 @@ async fn test_prover_run_parse_response_body() {
     assert!(parsed_body.contains("</html>"));
 }
 
-fn tlsn_run(handle: Handle, address: &str) -> (Sender<Vec<u8>>, Receiver<Vec<u8>>) {
+fn tlsn_run(handle: Handle, address: &str) -> AsyncSocket {
     let tcp_stream = std::net::TcpStream::connect(&format!("{}:{}", address, "443")).unwrap();
 
-    let (prover, request_channel, response_channel) = Prover::<Vec<u8>>::new_with_standard(
+    let (mut prover, async_socket) = Prover::new(
         ProverConfig::default(),
         address.to_owned(),
-        tcp_stream,
+        Box::new(RustCryptoBackend::new()) as Box<dyn Backend>,
+        Box::new(tcp_stream) as Box<dyn ReadWrite>,
     )
     .unwrap();
-    prover.run(handle.compat());
+    prover.run(&handle.compat()).unwrap();
 
-    (request_channel, response_channel)
+    async_socket
 }
 
-async fn parse_response_headers(response_channel: &mut Receiver<Vec<u8>>) -> Vec<u8> {
+async fn parse_response_headers(async_socket: &mut AsyncSocket) -> Vec<u8> {
     let headers_end_marker = b"\r\n\r\n";
     let mut response_headers = Vec::new();
 
     loop {
-        let next_bytes = response_channel.select_next_some().await;
-        response_headers.write_all(&next_bytes).unwrap();
+        async_socket.read(&mut response_headers).await.unwrap();
 
         if let Some(_) = response_headers
             .windows(headers_end_marker.len())

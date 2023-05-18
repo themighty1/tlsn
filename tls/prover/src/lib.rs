@@ -14,8 +14,7 @@ mod config;
 mod socket;
 
 pub use config::ProverConfig;
-
-use self::socket::AsyncSocket;
+pub use socket::AsyncSocket;
 
 pub trait ReadWrite: Read + Write + Unpin + Send {}
 impl<T> ReadWrite for T where T: Read + Write + Unpin + Send {}
