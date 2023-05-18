@@ -1,7 +1,7 @@
 use bytes::Bytes;
 use futures::{
     task::{Spawn, SpawnExt},
-    Future,
+    Future, SinkExt, StreamExt,
 };
 use std::{
     io::{Read, Write},
@@ -31,9 +31,9 @@ impl Prover {
         backend: Box<dyn Backend>,
         mut socket: Box<dyn ReadWrite>,
     ) -> Result<(Self, AsyncSocket), ProverError> {
-        let (request_sender, mut request_receiver) = tokio::sync::mpsc::channel::<Bytes>(10);
-        let (response_sender, response_receiver) =
-            tokio::sync::mpsc::channel::<Result<Bytes, std::io::Error>>(10);
+        let (request_sender, mut request_receiver) = futures::channel::mpsc::channel::<Bytes>(10);
+        let (mut response_sender, response_receiver) =
+            futures::channel::mpsc::channel::<Result<Bytes, std::io::Error>>(10);
 
         let async_socket = AsyncSocket::new(request_sender, response_receiver);
 
@@ -46,7 +46,7 @@ impl Prover {
             tls_conn.start().await.unwrap();
 
             // Accept requests and write them to the tls connection
-            if let Some(request) = request_receiver.recv().await {
+            if let Some(request) = request_receiver.next().await {
                 tls_conn
                     .write_all_plaintext(request.as_ref())
                     .await
@@ -82,8 +82,7 @@ impl Prover {
     // Caller needs to run future on executor
     pub fn run(&mut self, executor: &dyn Spawn) -> Result<(), ProverError> {
         let run_future = self.run_future.take().ok_or(ProverError::AlreadyRunning)?;
-        executor.spawn(run_future).unwrap();
-        Ok(())
+        executor.spawn(run_future).map_err(ProverError::Spawn)
     }
 }
 
@@ -97,4 +96,6 @@ pub enum ProverError {
     InvalidSeverName(#[from] InvalidDnsNameError),
     #[error("Prover is already running")]
     AlreadyRunning,
+    #[error(transparent)]
+    Spawn(#[from] futures::task::SpawnError),
 }

@@ -25,7 +25,6 @@ futures = "0.3"
 futures-util = "0.3"
 tokio = "1.23"
 tokio-util = "0.7"
-tokio-stream = "0.1"
 
 # num
 num = "0.4"

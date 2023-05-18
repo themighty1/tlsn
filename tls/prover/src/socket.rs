@@ -1,24 +1,22 @@
 use bytes::Bytes;
-use futures::{sink::SinkMapErr, SinkExt};
+use futures::{
+    channel::mpsc::{Receiver, SendError, Sender},
+    sink::SinkMapErr,
+    AsyncRead, AsyncWrite, SinkExt,
+};
 use std::{
     pin::Pin,
     task::{Context, Poll},
 };
-use tokio::{
-    io::{AsyncRead as TokioAsyncRead, AsyncWrite as TokioAsyncWrite, ReadBuf},
-    sync::mpsc::{Receiver, Sender},
-};
-use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::{
+    compat::{Compat, TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt},
     io::{CopyToBytes, SinkWriter, StreamReader},
-    sync::{PollSendError, PollSender},
 };
 
 pub struct AsyncSocket {
-    sink_writer: SinkWriter<
-        CopyToBytes<SinkMapErr<PollSender<Bytes>, fn(PollSendError<Bytes>) -> std::io::Error>>,
-    >,
-    stream_reader: StreamReader<ReceiverStream<Result<Bytes, std::io::Error>>, Bytes>,
+    sink_writer:
+        Compat<SinkWriter<CopyToBytes<SinkMapErr<Sender<Bytes>, fn(SendError) -> std::io::Error>>>>,
+    stream_reader: Compat<StreamReader<Receiver<Result<Bytes, std::io::Error>>, Bytes>>,
 }
 
 impl AsyncSocket {
@@ -26,27 +24,31 @@ impl AsyncSocket {
         request_sender: Sender<Bytes>,
         response_receiver: Receiver<Result<Bytes, std::io::Error>>,
     ) -> Self {
+        fn convert_error(err: SendError) -> std::io::Error {
+            std::io::Error::new(std::io::ErrorKind::Other, err)
+        }
+
         Self {
             sink_writer: SinkWriter::new(CopyToBytes::new(
-                PollSender::new(request_sender)
-                    .sink_map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err)),
-            )),
-            stream_reader: StreamReader::new(ReceiverStream::new(response_receiver)),
+                request_sender.sink_map_err(convert_error as fn(SendError) -> std::io::Error),
+            ))
+            .compat_write(),
+            stream_reader: StreamReader::new(response_receiver).compat(),
         }
     }
 }
 
-impl TokioAsyncRead for AsyncSocket {
+impl AsyncRead for AsyncSocket {
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
-        buf: &mut ReadBuf,
-    ) -> Poll<Result<(), std::io::Error>> {
+        buf: &mut [u8],
+    ) -> Poll<Result<usize, std::io::Error>> {
         Pin::new(&mut self.stream_reader).poll_read(cx, buf)
     }
 }
 
-impl TokioAsyncWrite for AsyncSocket {
+impl AsyncWrite for AsyncSocket {
     fn poll_write(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -62,10 +64,10 @@ impl TokioAsyncWrite for AsyncSocket {
         Pin::new(&mut self.sink_writer).poll_flush(cx)
     }
 
-    fn poll_shutdown(
+    fn poll_close(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
     ) -> Poll<Result<(), std::io::Error>> {
-        Pin::new(&mut self.sink_writer).poll_shutdown(cx)
+        Pin::new(&mut self.sink_writer).poll_close(cx)
     }
 }

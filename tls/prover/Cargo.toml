@@ -13,7 +13,6 @@ thiserror.workspace = true
 webpki-roots.workspace = true
 tokio = { workspace = true, features = ["sync"] }
 tokio-util = { workspace = true, features = ["io", "compat"] }
-tokio-stream =  { workspace = true, default-featurs = false, features = ["sync"] }
 bytes.workspace = true
 
 [dev-dependencies]
