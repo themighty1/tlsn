@@ -1,12 +1,15 @@
+use std::io::{Read, Write};
+
 use futures::{AsyncReadExt, AsyncWriteExt};
-use prover::{AsyncSocket, Prover, ProverConfig, ReadWrite};
+use prover::{AsyncSocket, Prover, ProverConfig};
 use tls_client::{Backend, RustCryptoBackend};
 use tokio::runtime::Handle;
 use utils_aio::executor::SpawnCompatExt;
 
 #[tokio::test]
 async fn test_prover_run_parse_response_headers() {
-    let mut async_socket = tlsn_run(Handle::current(), "tlsnotary.org");
+    let (mut prover, mut async_socket) = tlsn_new("tlsnotary.org");
+    prover.run(Handle::current().compat()).unwrap();
 
     async_socket
             .write_all(
@@ -26,7 +29,8 @@ async fn test_prover_run_parse_response_headers() {
 
 #[tokio::test]
 async fn test_prover_run_parse_response_body() {
-    let mut async_socket = tlsn_run(Handle::current(), "tlsnotary.org");
+    let (mut prover, mut async_socket) = tlsn_new("tlsnotary.org");
+    prover.run(Handle::current().compat()).unwrap();
 
     // First we need to parse the response header again
     async_socket
@@ -76,19 +80,28 @@ async fn test_prover_run_parse_response_body() {
     assert!(parsed_body.contains("</html>"));
 }
 
-fn tlsn_run(handle: Handle, address: &str) -> AsyncSocket {
+#[tokio::test]
+async fn smoke_test() {
+    let (mut prover, _async_socket) = tlsn_new("tlsnotary.org");
+    prover.run(Handle::current().compat()).unwrap();
+    loop {}
+}
+
+fn tlsn_new(address: &str) -> (Prover, AsyncSocket) {
     let tcp_stream = std::net::TcpStream::connect(&format!("{}:{}", address, "443")).unwrap();
 
-    let (mut prover, async_socket) = Prover::new(
+    let (prover, async_socket) = Prover::new(
         ProverConfig::default(),
         address.to_owned(),
         Box::new(RustCryptoBackend::new()) as Box<dyn Backend>,
-        Box::new(tcp_stream) as Box<dyn ReadWrite>,
+        (
+            Box::new(tcp_stream.try_clone().unwrap()) as Box<dyn Read + Send>,
+            Box::new(tcp_stream) as Box<dyn Write + Send>,
+        ),
     )
     .unwrap();
-    prover.run(&handle.compat()).unwrap();
 
-    async_socket
+    (prover, async_socket)
 }
 
 async fn parse_response_headers(async_socket: &mut AsyncSocket) -> Vec<u8> {
