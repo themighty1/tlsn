@@ -19,7 +19,7 @@ pub use config::ProverConfig;
 pub use socket::AsyncSocket;
 
 pub struct Prover {
-    pub run_future: Option<Pin<Box<dyn Future<Output = ()> + Send + 'static>>>,
+    run_futures: Option<Vec<Pin<Box<dyn Future<Output = ()> + Send + 'static>>>>,
 }
 
 pub trait ReadWrite: Read + Write + Send + Unpin + 'static {}
@@ -47,57 +47,66 @@ impl Prover {
         )?));
         let tls_conn_ref: &'static Mutex<ClientConnection> = Box::leak(tls_conn);
 
-        let run_future = async move {
+        let start_future = async move {
             tls_conn_ref.lock().await.start().await.unwrap();
+        };
+
+        let read_write_tls_future = async move {
             loop {
-                select! {
-                    request = request_receiver.next().fuse() => {
-                        let mut tls_conn = tls_conn_ref.lock().await;
-                        if let Some(request) = request {
-                            tls_conn.write_all_plaintext(request.as_ref()).await.unwrap();
-                            println!("request sent");
-                        }
-                    },
-                    _read_write_tls = async {
-                        let mut tls_conn = tls_conn_ref.lock().await;
-                        if tls_conn.wants_read() {
-                            match tls_conn.read_tls(&mut socket) {
-                                Ok(_) => ({
-                                    println!("read_tls ok");
-                                }),
-                                Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => (
-                                    println!("read_tls would block")),
-                                Err(err) => panic!("{}", err)
-                            }
-                            tls_conn.process_new_packets().await.unwrap();
-                        }
-                        if tls_conn.wants_write() {
-                            match tls_conn.write_tls(&mut socket) {
-                                Ok(_) => (println!("write_tls ok")),
-                                Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => (println!("write_tls would block")),
-                                Err(err) => panic!("{}", err)
-                            }
-                        }
-                    }.fuse() => (),
-                    _response = async {
-                        let mut tls_conn = tls_conn_ref.lock().await;
-                        let mut response = Vec::new();
-                        match tls_conn.reader().read_to_end(&mut response) {
-                                Ok(_) => (),
-                                Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => (),
-                                Err(err) => panic!("{}", err)
-                            }
-                        if !response.is_empty() {
-                            println!("response = {:?}", response);
-                            response_sender.send(Ok(response.into())).await.unwrap();
-                        }
-                    }.fuse() => (),
+                let mut tls_conn = tls_conn_ref.lock().await;
+                if tls_conn.wants_read() {
+                    match tls_conn.read_tls(&mut socket) {
+                        Ok(_) => (),
+                        Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => (),
+                        Err(err) => panic!("{}", err),
+                    }
+                    tls_conn.process_new_packets().await.unwrap();
+                }
+                if tls_conn.wants_write() {
+                    match tls_conn.write_tls(&mut socket) {
+                        Ok(_) => (),
+                        Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => (),
+                        Err(err) => panic!("{}", err),
+                    }
+                }
+            }
+        };
+
+        let request_future = async move {
+            loop {
+                let request = request_receiver.next().await;
+                if let Some(request) = request {
+                    let mut tls_conn = tls_conn_ref.lock().await;
+                    tls_conn
+                        .write_all_plaintext(request.as_ref())
+                        .await
+                        .unwrap();
+                }
+            }
+        };
+
+        let response_future = async move {
+            loop {
+                let mut tls_conn = tls_conn_ref.lock().await;
+                let mut response = Vec::new();
+                match tls_conn.reader().read_to_end(&mut response) {
+                    Ok(_) => (),
+                    Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => (),
+                    Err(err) => panic!("{}", err),
+                }
+                if !response.is_empty() {
+                    response_sender.send(Ok(response.into())).await.unwrap();
                 }
             }
         };
 
         let prover = Prover {
-            run_future: Some(Box::pin(run_future)),
+            run_futures: Some(vec![
+                Box::pin(start_future),
+                Box::pin(read_write_tls_future),
+                Box::pin(request_future),
+                Box::pin(response_future),
+            ]),
         };
 
         Ok((prover, async_socket))
@@ -105,8 +114,11 @@ impl Prover {
 
     // Caller needs to run future on executor
     pub fn run(&mut self, executor: impl Spawn) -> Result<(), ProverError> {
-        let run_future = self.run_future.take().ok_or(ProverError::AlreadyRunning)?;
-        executor.spawn(run_future).map_err(ProverError::Spawn)
+        let run_futures = self.run_futures.take().ok_or(ProverError::AlreadyRunning)?;
+        for future in run_futures {
+            executor.spawn(future).map_err(ProverError::Spawn)?;
+        }
+        Ok(())
     }
 }
 
