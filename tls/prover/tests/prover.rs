@@ -72,6 +72,7 @@ async fn test_prover_run_parse_response_body() {
     let response_body = tokio::spawn(parse_response_body(async_socket, content_length))
         .await
         .unwrap();
+    println!("blubbb");
 
     // Convert parsed bytes to utf8 and also add the header part which did include some body parts
     let parsed_body =
@@ -99,10 +100,18 @@ fn tlsn_new(address: &str) -> (Prover, AsyncSocket) {
 
 async fn parse_response_headers(mut async_socket: AsyncSocket) -> (Vec<u8>, AsyncSocket) {
     let headers_end_marker = b"\r\n\r\n";
-    let mut response_headers = Vec::new();
+    let mut response_headers = vec![0; 1024];
+    let mut read_bytes = 0;
 
     loop {
-        async_socket.read(&mut response_headers).await.unwrap();
+        read_bytes += async_socket
+            .read(&mut response_headers[read_bytes..])
+            .await
+            .unwrap();
+
+        if read_bytes >= response_headers.len() {
+            response_headers.resize(response_headers.len() * 2, 0);
+        }
 
         if let Some(_) = response_headers
             .windows(headers_end_marker.len())
@@ -116,16 +125,16 @@ async fn parse_response_headers(mut async_socket: AsyncSocket) -> (Vec<u8>, Asyn
 }
 
 async fn parse_response_body(mut async_socket: AsyncSocket, mut content_length: usize) -> Vec<u8> {
-    let response_body = tokio::spawn(async move {
-        let mut buffer: Vec<u8> = Vec::new();
-        while content_length > 0 {
-            let bytes_read = async_socket.read(&mut buffer).await.unwrap();
-            content_length -= bytes_read;
-        }
-        buffer
-    })
-    .await
-    .unwrap();
+    let mut response_body: Vec<u8> = vec![0; content_length];
+    let mut read_bytes = 0;
 
+    while content_length > 0 {
+        let read_bytes_in_this_pass = async_socket
+            .read(&mut response_body[read_bytes..])
+            .await
+            .unwrap();
+        read_bytes += read_bytes_in_this_pass;
+        content_length -= read_bytes_in_this_pass;
+    }
     response_body
 }
