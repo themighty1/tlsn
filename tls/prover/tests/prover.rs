@@ -1,6 +1,5 @@
 use futures::{AsyncReadExt, AsyncWriteExt};
 use prover::{AsyncSocket, Prover, ProverConfig, ReadWrite};
-use std::io::{Read, Write};
 use tls_client::{Backend, RustCryptoBackend};
 use tokio::runtime::Handle;
 use utils_aio::executor::SpawnCompatExt;
@@ -72,7 +71,6 @@ async fn test_prover_run_parse_response_body() {
     let response_body = tokio::spawn(parse_response_body(async_socket, content_length))
         .await
         .unwrap();
-    println!("blubbb");
 
     // Convert parsed bytes to utf8 and also add the header part which did include some body parts
     let parsed_body =
@@ -120,21 +118,13 @@ async fn parse_response_headers(mut async_socket: AsyncSocket) -> (Vec<u8>, Asyn
             break;
         }
     }
+    response_headers.resize(read_bytes, 0);
 
     (response_headers, async_socket)
 }
 
-async fn parse_response_body(mut async_socket: AsyncSocket, mut content_length: usize) -> Vec<u8> {
+async fn parse_response_body(mut async_socket: AsyncSocket, content_length: usize) -> Vec<u8> {
     let mut response_body: Vec<u8> = vec![0; content_length];
-    let mut read_bytes = 0;
-
-    while content_length > 0 {
-        let read_bytes_in_this_pass = async_socket
-            .read(&mut response_body[read_bytes..])
-            .await
-            .unwrap();
-        read_bytes += read_bytes_in_this_pass;
-        content_length -= read_bytes_in_this_pass;
-    }
+    async_socket.read_exact(&mut response_body).await.unwrap();
     response_body
 }
