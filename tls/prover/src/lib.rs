@@ -61,14 +61,22 @@ impl Prover {
                         println!("write_tls");
                         let mut tls_conn = tls_conn_ref.lock().await;
                         if tls_conn.wants_write() {
-                            tls_conn.write_tls(&mut write_socket).unwrap();
+                            match tls_conn.write_tls(&mut write_socket) {
+                                Ok(_) => (),
+                                Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => (),
+                                Err(err) => panic!("{}", err)
+                            }
                         }
                     }.fuse() => (),
                     _read_tls = async {
                         println!("read_tls");
                         let mut tls_conn = tls_conn_ref.lock().await;
                         if tls_conn.wants_read() {
-                            tls_conn.read_tls(&mut read_socket).unwrap();
+                            match tls_conn.read_tls(&mut read_socket) {
+                                Ok(_) => (),
+                                Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => (),
+                                Err(err) => panic!("{}", err)
+                            }
                             tls_conn.process_new_packets().await.unwrap();
                         }
                     }.fuse() => (),
@@ -76,7 +84,11 @@ impl Prover {
                         println!("response");
                         let mut tls_conn = tls_conn_ref.lock().await;
                         let mut response = Vec::new();
-                        tls_conn.reader().read_to_end(&mut response).unwrap();
+                        match tls_conn.reader().read_to_end(&mut response) {
+                                Ok(_) => (),
+                                Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => (),
+                                Err(err) => panic!("{}", err)
+                            }
                         if !response.is_empty() {
                             response_sender.send(Ok(response.into())).await.unwrap();
                         }
