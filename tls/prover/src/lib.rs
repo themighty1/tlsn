@@ -22,12 +22,15 @@ pub struct Prover {
     pub run_future: Option<Pin<Box<dyn Future<Output = ()> + Send + 'static>>>,
 }
 
+pub trait ReadWrite: Read + Write + Send + Unpin + 'static {}
+impl<T: Read + Write + Send + Unpin + 'static> ReadWrite for T {}
+
 impl Prover {
     pub fn new(
         config: ProverConfig,
         url: String,
         backend: Box<dyn Backend>,
-        (mut read_socket, mut write_socket): (Box<dyn Read + Send>, Box<dyn Write + Send>),
+        mut socket: Box<dyn ReadWrite + Send>,
     ) -> Result<(Self, AsyncSocket), ProverError> {
         let (request_sender, mut request_receiver) = futures::channel::mpsc::channel::<Bytes>(10);
         let (mut response_sender, response_receiver) =
@@ -44,44 +47,39 @@ impl Prover {
         )?));
         let tls_conn_ref: &'static Mutex<ClientConnection> = Box::leak(tls_conn);
 
-        println!("tls_conn_ref created = {:?}", tls_conn_ref);
         let run_future = async move {
-            println!("run_future started!!!");
             tls_conn_ref.lock().await.start().await.unwrap();
             loop {
                 select! {
                     request = request_receiver.next().fuse() => {
-                        println!("request = {:?}", request);
                         let mut tls_conn = tls_conn_ref.lock().await;
                         if let Some(request) = request {
                             tls_conn.write_all_plaintext(request.as_ref()).await.unwrap();
+                            println!("request sent");
                         }
                     },
-                    _write_tls = async {
-                        println!("write_tls");
-                        let mut tls_conn = tls_conn_ref.lock().await;
-                        if tls_conn.wants_write() {
-                            match tls_conn.write_tls(&mut write_socket) {
-                                Ok(_) => (),
-                                Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => (),
-                                Err(err) => panic!("{}", err)
-                            }
-                        }
-                    }.fuse() => (),
-                    _read_tls = async {
-                        println!("read_tls");
+                    _read_write_tls = async {
                         let mut tls_conn = tls_conn_ref.lock().await;
                         if tls_conn.wants_read() {
-                            match tls_conn.read_tls(&mut read_socket) {
-                                Ok(_) => (),
-                                Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => (),
+                            match tls_conn.read_tls(&mut socket) {
+                                Ok(_) => ({
+                                    println!("read_tls ok");
+                                }),
+                                Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => (
+                                    println!("read_tls would block")),
                                 Err(err) => panic!("{}", err)
                             }
                             tls_conn.process_new_packets().await.unwrap();
                         }
+                        if tls_conn.wants_write() {
+                            match tls_conn.write_tls(&mut socket) {
+                                Ok(_) => (println!("write_tls ok")),
+                                Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => (println!("write_tls would block")),
+                                Err(err) => panic!("{}", err)
+                            }
+                        }
                     }.fuse() => (),
                     _response = async {
-                        println!("response");
                         let mut tls_conn = tls_conn_ref.lock().await;
                         let mut response = Vec::new();
                         match tls_conn.reader().read_to_end(&mut response) {
@@ -90,6 +88,7 @@ impl Prover {
                                 Err(err) => panic!("{}", err)
                             }
                         if !response.is_empty() {
+                            println!("response = {:?}", response);
                             response_sender.send(Ok(response.into())).await.unwrap();
                         }
                     }.fuse() => (),
