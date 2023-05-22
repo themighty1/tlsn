@@ -1,5 +1,5 @@
 use futures::{AsyncReadExt, AsyncWriteExt};
-use prover::{AsyncSocket, Prover, ProverConfig};
+use prover::{AsyncSocket, Prover, ProverConfig, ReadWrite};
 use std::io::{Read, Write};
 use tls_client::{Backend, RustCryptoBackend};
 use tokio::runtime::Handle;
@@ -90,10 +90,7 @@ fn tlsn_new(address: &str) -> (Prover, AsyncSocket) {
         ProverConfig::default(),
         address.to_owned(),
         Box::new(RustCryptoBackend::new()) as Box<dyn Backend>,
-        (
-            Box::new(tcp_stream.try_clone().unwrap()) as Box<dyn Read + Send>,
-            Box::new(tcp_stream) as Box<dyn Write + Send>,
-        ),
+        Box::new(tcp_stream) as Box<dyn ReadWrite + Send>,
     )
     .unwrap();
 
