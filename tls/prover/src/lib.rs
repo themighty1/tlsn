@@ -41,22 +41,17 @@ impl Prover {
 
         let server_name = ServerName::try_from(url.as_str())?;
         let client_config = Arc::new(config.client_config);
-        let tls_conn = Box::new(Mutex::new(ClientConnection::new(
-            client_config,
-            backend,
-            server_name,
-        )?));
+        let tls_conn = Mutex::new(ClientConnection::new(client_config, backend, server_name)?);
 
-        let tls_conn_ref: &'static Mutex<ClientConnection> = Box::leak(tls_conn);
         let run_future = async move {
-            tls_conn_ref.lock().await.start().await.unwrap();
+            tls_conn.lock().await.start().await.unwrap();
             loop {
                 select! {
                     request = request_receiver.select_next_some() => {
-                        let mut tls_conn = tls_conn_ref.lock().await;
+                        let mut tls_conn = tls_conn.lock().await;
                         tls_conn.write_all_plaintext(request.as_ref()).await.unwrap();
                     },
-                    mut tls_conn = tls_conn_ref.lock().fuse() =>  {
+                    mut tls_conn = tls_conn.lock().fuse() =>  {
                         if tls_conn.wants_write() {
                             match tls_conn.write_tls(&mut socket) {
                                 Ok(_) => (),
@@ -74,7 +69,7 @@ impl Prover {
                             tls_conn.process_new_packets().await.unwrap();
                         }
                     },
-                    mut tls_conn = tls_conn_ref.lock().fuse() =>  {
+                    mut tls_conn = tls_conn.lock().fuse() =>  {
                         let mut response = Vec::new();
                         match tls_conn.reader().read_to_end(&mut response) {
                                 Ok(_) => (),
@@ -86,10 +81,13 @@ impl Prover {
                         }
                     }
                     _ = close_tls_receiver => {
-                        let mut tls_conn = tls_conn_ref.lock().await;
+                        let mut tls_conn = tls_conn.lock().await;
                         tls_conn.send_close_notify().await.unwrap();
-                        _ = unsafe { Box::from_raw(tls_conn_ref as *const Mutex<ClientConnection>
-                                                                  as *mut Mutex<ClientConnection>) };
+                        match tls_conn.write_tls(&mut socket) {
+                            Ok(_) => (),
+                            Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => (),
+                            Err(err) => panic!("{}", err)
+                        }
                         break;
                     }
 
