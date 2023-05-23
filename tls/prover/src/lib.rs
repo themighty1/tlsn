@@ -46,6 +46,7 @@ impl Prover {
             backend,
             server_name,
         )?));
+
         let tls_conn_ref: &'static Mutex<ClientConnection> = Box::leak(tls_conn);
         let run_future = async move {
             tls_conn_ref.lock().await.start().await.unwrap();
@@ -86,6 +87,8 @@ impl Prover {
                     }
                     _ = close_tls_receiver => {
                         let mut tls_conn = tls_conn_ref.lock().await;
+                        let tls_conn_ref = unsafe { Box::from_raw(tls_conn_ref as *const Mutex<ClientConnection>
+                                                                  as *mut Mutex<ClientConnection>) };
                         tls_conn.send_close_notify().await.unwrap();
                         break;
                     }
