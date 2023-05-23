@@ -87,9 +87,9 @@ impl Prover {
                     }
                     _ = close_tls_receiver => {
                         let mut tls_conn = tls_conn_ref.lock().await;
-                        let tls_conn_ref = unsafe { Box::from_raw(tls_conn_ref as *const Mutex<ClientConnection>
-                                                                  as *mut Mutex<ClientConnection>) };
                         tls_conn.send_close_notify().await.unwrap();
+                        _ = unsafe { Box::from_raw(tls_conn_ref as *const Mutex<ClientConnection>
+                                                                  as *mut Mutex<ClientConnection>) };
                         break;
                     }
 
