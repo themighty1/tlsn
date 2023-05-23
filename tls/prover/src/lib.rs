@@ -10,6 +10,7 @@ use std::{
     sync::Arc,
 };
 use tls_client::{client::InvalidDnsNameError, Backend, ClientConnection, ServerName};
+use tlsn_core::transcript::TranscriptSet;
 use tokio::sync::Mutex;
 
 mod config;
@@ -20,6 +21,7 @@ pub use handle::ProverHandle;
 
 pub struct Prover {
     run_future: Option<Pin<Box<dyn Future<Output = ()> + Send + 'static>>>,
+    transcripts: Option<TranscriptSet>,
 }
 
 pub trait ReadWrite: Read + Write + Send + Unpin + 'static {}
@@ -97,6 +99,7 @@ impl Prover {
 
         let prover = Prover {
             run_future: Some(Box::pin(run_future)),
+            transcripts: None,
         };
 
         Ok((prover, handle))
