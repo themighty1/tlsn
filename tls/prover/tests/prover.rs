@@ -1,5 +1,5 @@
 use futures::{AsyncReadExt, AsyncWriteExt};
-use prover::{AsyncSocket, Prover, ProverConfig, ReadWrite};
+use prover::{Prover, ProverConfig, ProverHandle, ReadWrite};
 use tls_client::{Backend, RustCryptoBackend};
 use tokio::runtime::Handle;
 use utils_aio::executor::SpawnCompatExt;
@@ -81,7 +81,7 @@ async fn test_prover_run_parse_response_body() {
     assert!(parsed_body.contains("</html>"));
 }
 
-fn tlsn_new(address: &str) -> (Prover, AsyncSocket) {
+fn tlsn_new(address: &str) -> (Prover, ProverHandle) {
     let tcp_stream = std::net::TcpStream::connect(&format!("{}:{}", address, "443")).unwrap();
     tcp_stream.set_nonblocking(true).unwrap();
 
@@ -96,7 +96,7 @@ fn tlsn_new(address: &str) -> (Prover, AsyncSocket) {
     (prover, async_socket)
 }
 
-async fn parse_response_headers(mut async_socket: AsyncSocket) -> (Vec<u8>, AsyncSocket) {
+async fn parse_response_headers(mut async_socket: ProverHandle) -> (Vec<u8>, ProverHandle) {
     let headers_end_marker = b"\r\n\r\n";
     let mut response_headers = vec![0; 1024];
     let mut read_bytes = 0;
@@ -123,7 +123,7 @@ async fn parse_response_headers(mut async_socket: AsyncSocket) -> (Vec<u8>, Asyn
     (response_headers, async_socket)
 }
 
-async fn parse_response_body(mut async_socket: AsyncSocket, content_length: usize) -> Vec<u8> {
+async fn parse_response_body(mut async_socket: ProverHandle, content_length: usize) -> Vec<u8> {
     let mut response_body: Vec<u8> = vec![0; content_length];
     async_socket.read_exact(&mut response_body).await.unwrap();
     response_body

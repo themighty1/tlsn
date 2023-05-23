@@ -1,6 +1,9 @@
 use bytes::Bytes;
 use futures::{
-    channel::mpsc::{Receiver, SendError, Sender},
+    channel::{
+        mpsc::{Receiver, SendError, Sender},
+        oneshot::Sender as OneshotSender,
+    },
     sink::SinkMapErr,
     AsyncRead, AsyncWrite, SinkExt,
 };
@@ -13,16 +16,20 @@ use tokio_util::{
     io::{CopyToBytes, SinkWriter, StreamReader},
 };
 
-pub struct AsyncSocket {
+use crate::ProverError;
+
+pub struct ProverHandle {
     sink_writer:
         Compat<SinkWriter<CopyToBytes<SinkMapErr<Sender<Bytes>, fn(SendError) -> std::io::Error>>>>,
     stream_reader: Compat<StreamReader<Receiver<Result<Bytes, std::io::Error>>, Bytes>>,
+    close_tls_sender: Option<OneshotSender<()>>,
 }
 
-impl AsyncSocket {
+impl ProverHandle {
     pub fn new(
         request_sender: Sender<Bytes>,
         response_receiver: Receiver<Result<Bytes, std::io::Error>>,
+        close_tls_sender: OneshotSender<()>,
     ) -> Self {
         fn convert_error(err: SendError) -> std::io::Error {
             std::io::Error::new(std::io::ErrorKind::Other, err)
@@ -34,11 +41,20 @@ impl AsyncSocket {
             ))
             .compat_write(),
             stream_reader: StreamReader::new(response_receiver).compat(),
+            close_tls_sender: Some(close_tls_sender),
         }
+    }
+
+    pub fn close_tls(&mut self) -> Result<(), ProverError> {
+        self.close_tls_sender
+            .take()
+            .ok_or(ProverError::AlreadyShutdown)?
+            .send(())
+            .map_err(|_| ProverError::CloseTlsConnection)
     }
 }
 
-impl AsyncRead for AsyncSocket {
+impl AsyncRead for ProverHandle {
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -48,7 +64,7 @@ impl AsyncRead for AsyncSocket {
     }
 }
 
-impl AsyncWrite for AsyncSocket {
+impl AsyncWrite for ProverHandle {
     fn poll_write(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
