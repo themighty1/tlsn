@@ -9,6 +9,7 @@ edition = "2021"
 futures.workspace = true
 tlsn-tls-client = { path = "../tls-client" }
 tlsn-utils-aio = { path = "../../utils/utils-aio" }
+tlsn-core = { path = "../../tlsn-core" }
 thiserror.workspace = true
 webpki-roots.workspace = true
 tokio = { workspace = true, features = ["sync"] }
