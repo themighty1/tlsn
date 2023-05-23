@@ -1,6 +1,6 @@
 use bytes::Bytes;
 use futures::{
-    select,
+    channel, select,
     task::{Spawn, SpawnExt},
     Future, FutureExt, SinkExt, StreamExt,
 };
@@ -13,10 +13,10 @@ use tls_client::{client::InvalidDnsNameError, Backend, ClientConnection, ServerN
 use tokio::sync::Mutex;
 
 mod config;
-mod socket;
+mod handle;
 
 pub use config::ProverConfig;
-pub use socket::AsyncSocket;
+pub use handle::ProverHandle;
 
 pub struct Prover {
     run_future: Option<Pin<Box<dyn Future<Output = ()> + Send + 'static>>>,
@@ -31,12 +31,13 @@ impl Prover {
         url: String,
         backend: Box<dyn Backend>,
         mut socket: Box<dyn ReadWrite + Send>,
-    ) -> Result<(Self, AsyncSocket), ProverError> {
-        let (request_sender, mut request_receiver) = futures::channel::mpsc::channel::<Bytes>(10);
+    ) -> Result<(Self, ProverHandle), ProverError> {
+        let (request_sender, mut request_receiver) = channel::mpsc::channel::<Bytes>(10);
         let (mut response_sender, response_receiver) =
-            futures::channel::mpsc::channel::<Result<Bytes, std::io::Error>>(10);
+            channel::mpsc::channel::<Result<Bytes, std::io::Error>>(10);
+        let (close_tls_sender, mut close_tls_receiver) = channel::oneshot::channel::<()>();
 
-        let async_socket = AsyncSocket::new(request_sender, response_receiver);
+        let handle = ProverHandle::new(request_sender, response_receiver, close_tls_sender);
 
         let server_name = ServerName::try_from(url.as_str())?;
         let client_config = Arc::new(config.client_config);
@@ -83,6 +84,12 @@ impl Prover {
                             response_sender.send(Ok(response.into())).await.unwrap();
                         }
                     }
+                    _ = close_tls_receiver => {
+                        let mut tls_conn = tls_conn_ref.lock().await;
+                        tls_conn.send_close_notify().await.unwrap();
+                        break;
+                    }
+
                 }
             }
         };
@@ -91,7 +98,7 @@ impl Prover {
             run_future: Some(Box::pin(run_future)),
         };
 
-        Ok((prover, async_socket))
+        Ok((prover, handle))
     }
 
     // Caller needs to run future on executor
@@ -113,4 +120,8 @@ pub enum ProverError {
     AlreadyRunning,
     #[error(transparent)]
     Spawn(#[from] futures::task::SpawnError),
+    #[error("Unable to close TLS connection")]
+    CloseTlsConnection,
+    #[error("Prover has already been shutdown")]
+    AlreadyShutdown,
 }
