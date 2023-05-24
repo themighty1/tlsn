@@ -1,12 +1,15 @@
 use bytes::Bytes;
-use futures::{channel, select, Future, FutureExt, SinkExt, StreamExt};
+use futures::{
+    channel::{self, oneshot::Canceled},
+    select, Future, FutureExt, SinkExt, StreamExt,
+};
 use std::{
     io::{Read, Write},
     pin::Pin,
     sync::Arc,
 };
 use tls_client::{client::InvalidDnsNameError, Backend, ClientConnection, ServerName};
-use tlsn_core::transcript::TranscriptSet;
+use tlsn_core::transcript::{Transcript, TranscriptSet};
 use tokio::sync::Mutex;
 
 mod config;
@@ -18,6 +21,7 @@ pub use socket::Socket;
 
 use state::{Finalized, Initialized, ProverState, Running};
 
+#[derive(Debug)]
 pub struct Prover<T: ProverState = Initialized>(T);
 
 impl Prover<Initialized> {
@@ -31,8 +35,9 @@ impl Prover<Initialized> {
         let (mut response_sender, response_receiver) =
             channel::mpsc::channel::<Result<Bytes, std::io::Error>>(10);
         let (close_tls_sender, mut close_tls_receiver) = channel::oneshot::channel::<()>();
+        let (transcript_sender, transcript_receiver) = channel::oneshot::channel::<TranscriptSet>();
 
-        let socket = Socket::new(request_sender, response_receiver, close_tls_sender);
+        let socket = Socket::new(request_sender, response_receiver);
 
         let server_name = ServerName::try_from(url.as_str())?;
         let client_config = Arc::new(config.client_config);
@@ -78,19 +83,29 @@ impl Prover<Initialized> {
                                 Err(err) => panic!("{}", err)
                             }
                         let read = received_data.len() - received_data_len_before_read;
+                        // TODO: If we replace the condition with  if `read >= 0`, we are unable to
+                        // close the connection. I would be interested why that happens.
                         if read > 0 {
-                            let response = received_data.split_at(received_data.len() - read).1.to_vec();
+                            let response = received_data.split_at(received_data_len_before_read).1.to_vec();
                             response_sender.send(Ok(response.into())).await.unwrap();
                         }
                     }
                     _ = close_tls_receiver => {
                         let mut tls_conn = tls_conn.lock().await;
-                        tls_conn.send_close_notify().await.unwrap();
+                        // TODO: This is some internal wrong handling of close_notify in `tls_client/src/backend/standard.rs` line 436
+                        // We should not treat close_notify alert as an error since we use it in our protocol to force
+                        // closing the connection
+                        tls_conn.send_close_notify().await.unwrap_err();
                         match tls_conn.complete_io(&mut tls_socket).await {
                             Ok(_) => (),
                             Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => (),
                             Err(err) => panic!("{}", err)
                         }
+                        let transcript_received = Transcript::new("tx", received_data);
+                        let transcript_sent = Transcript::new("rx", sent_data);
+
+                        let transcript_set = TranscriptSet::new(&[transcript_sent, transcript_received]);
+                        transcript_sender.send(transcript_set).unwrap();
                         break;
                     }
 
@@ -100,6 +115,8 @@ impl Prover<Initialized> {
 
         let prover = Self(Initialized {
             run_future: Some(Box::pin(run_future)),
+            transcript_receiver,
+            close_tls_sender,
         });
 
         Ok((prover, socket))
@@ -115,7 +132,10 @@ impl Prover<Initialized> {
         ),
         ProverError,
     > {
-        let prover = Prover(Running);
+        let prover = Prover(Running {
+            transcript_receiver: self.0.transcript_receiver,
+            close_tls_sender: self.0.close_tls_sender,
+        });
         let future = self
             .0
             .run_future
@@ -126,15 +146,20 @@ impl Prover<Initialized> {
 }
 
 impl Prover<Running> {
-    pub fn close(self) -> Result<Prover<Finalized>, ProverError> {
-        // TODO: Need to get transcripts after shutting down running future
-        todo!()
+    pub async fn finalize(self) -> Result<Prover<Finalized>, ProverError> {
+        self.0
+            .close_tls_sender
+            .send(())
+            .map_err(|_| ProverError::CloseTlsConnection)?;
+        let transcript = self.0.transcript_receiver.await?;
+
+        Ok(Prover(Finalized { transcript }))
     }
 }
 
 impl Prover<Finalized> {
-    pub fn get_transcripts(&self) -> Result<TranscriptSet, ProverError> {
-        todo!()
+    pub fn transcript(&self) -> &TranscriptSet {
+        &self.0.transcript
     }
 
     pub fn send_commitments(&mut self) -> Result<(), ProverError> {
@@ -159,4 +184,6 @@ pub enum ProverError {
     CloseTlsConnection,
     #[error("Prover has already been shutdown")]
     AlreadyShutdown,
+    #[error("Unable to receive transcripts: {0}")]
+    TranscriptError(#[from] Canceled),
 }

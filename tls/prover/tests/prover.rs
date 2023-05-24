@@ -17,7 +17,7 @@ async fn test_prover_parse_response_headers() {
 
     let (prover, mut prover_socket) = tlsn_new("tlsnotary.org");
     let (_, run_future) = prover.run().unwrap();
-    let _join_handle = tokio::spawn(run_future);
+    tokio::spawn(run_future);
 
     prover_socket
             .write_all(TLSN_TEST_REQUEST).await.unwrap();
@@ -36,7 +36,7 @@ async fn test_prover_parse_response_body() {
 
     let (prover, mut prover_socket) = tlsn_new("tlsnotary.org");
     let (_, run_future) = prover.run().unwrap();
-    let _join_handle = tokio::spawn(run_future);
+    tokio::spawn(run_future);
 
     // First we need to parse the response header again
     prover_socket
@@ -83,8 +83,8 @@ async fn test_prover_close_notify() {
     _ = Handle::current().enter();
 
     let (prover, mut prover_socket) = tlsn_new("tlsnotary.org");
-    let (_, run_future) = prover.run().unwrap();
-    let join_handle = tokio::spawn(run_future);
+    let (prover, run_future) = prover.run().unwrap();
+    tokio::spawn(run_future);
 
     prover_socket
             .write_all(TLSN_TEST_REQUEST).await.unwrap();
@@ -93,14 +93,10 @@ async fn test_prover_close_notify() {
     let (response_headers, mut prover_socket) = tokio::spawn(parse_response_headers(prover_socket))
         .await
         .unwrap();
+
     let _parsed_headers = String::from_utf8(response_headers).unwrap();
 
-    prover_socket.close_tls().unwrap();
-
-    // TODO: This is some internal wrong handling of close_notify in `tls_client/src/backend/standard.rs` line 436
-    // We should not treat close_notify alert as an error since we use it in our protocol to force
-    // closing the connection
-    join_handle.await.unwrap_err();
+    prover.finalize().await.unwrap();
 
     // This should fail, since we closed the tls connection
     let expected_error = prover_socket
@@ -114,8 +110,8 @@ async fn test_prover_transcript() {
     _ = Handle::current().enter();
 
     let (prover, mut prover_socket) = tlsn_new("tlsnotary.org");
-    let (_, run_future) = prover.run().unwrap();
-    let _join_handle = tokio::spawn(run_future);
+    let (prover, run_future) = prover.run().unwrap();
+    tokio::spawn(run_future);
 
     // First we need to parse the response header again
     prover_socket
@@ -148,15 +144,17 @@ async fn test_prover_transcript() {
         .await
         .unwrap();
 
+    let prover = prover.finalize().await.unwrap();
+
     // Convert parsed bytes to utf8 and also add the header part which did include some body parts
     let parsed_body =
         parsed_headers.split_off(body_start) + &String::from_utf8(response_body).unwrap();
 
-    let expected_transcript_sent = "";
-    let expected_transcript_received = "";
+    let expected_transcript_sent = prover.transcript().get_by_id("tx").unwrap().data();
+    let expected_transcript_received = prover.transcript().get_by_id("rx").unwrap().data(); 
 
-    assert_eq!(expected_transcript_sent, std::str::from_utf8(TLSN_TEST_REQUEST).unwrap());
-    assert_eq!(expected_transcript_received, parsed_headers + parsed_body.as_str());
+    assert_eq!(expected_transcript_sent, TLSN_TEST_REQUEST);
+    assert_eq!(expected_transcript_received, (parsed_headers + parsed_body.as_str()).as_bytes());
 }
 
 fn tlsn_new(address: &str) -> (Prover, Socket) {

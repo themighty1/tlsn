@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::ops::Range;
 
 /// A set of transcripts
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct TranscriptSet(Vec<Transcript>);
 
 impl TranscriptSet {
@@ -18,7 +18,7 @@ impl TranscriptSet {
 }
 
 /// A transcript contains a subset of bytes from a TLS session
-#[derive(Default, Serialize, Deserialize, Clone)]
+#[derive(Default, Serialize, Deserialize, Clone, Debug)]
 pub struct Transcript {
     id: String,
     data: Vec<u8>,
