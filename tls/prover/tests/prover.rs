@@ -1,15 +1,17 @@
 use futures::{AsyncReadExt, AsyncWriteExt};
-use prover::{Prover, ProverConfig, ProverHandle, ReadWrite};
+use prover::{Prover, ProverConfig, ReadWrite, Socket};
 use tls_client::{Backend, RustCryptoBackend};
 use tokio::runtime::Handle;
-use utils_aio::executor::SpawnCompatExt;
 
 #[tokio::test]
 async fn test_prover_run_parse_response_headers() {
-    let (mut prover, mut prover_handle) = tlsn_new("tlsnotary.org");
-    prover.run(Handle::current().compat()).unwrap();
+    _ = Handle::current().enter();
 
-    prover_handle
+    let (prover, mut prover_socket) = tlsn_new("tlsnotary.org");
+    let (_, run_future) = prover.run().unwrap();
+    let _join_handle = tokio::spawn(run_future);
+
+    prover_socket
             .write_all(
                     b"GET / HTTP/1.1\r\n\
                     Host: tlsnotary.org\r\n\
@@ -19,8 +21,7 @@ async fn test_prover_run_parse_response_headers() {
                     Accept-Encoding: identity\r\n\r\n"
                 ).await.unwrap();
 
-    _ = Handle::current().enter();
-    let (response_headers, _) = tokio::spawn(parse_response_headers(prover_handle))
+    let (response_headers, _) = tokio::spawn(parse_response_headers(prover_socket))
         .await
         .unwrap();
     let parsed_headers = String::from_utf8(response_headers).unwrap();
@@ -30,11 +31,13 @@ async fn test_prover_run_parse_response_headers() {
 
 #[tokio::test]
 async fn test_prover_run_parse_response_body() {
-    let (mut prover, mut prover_handle) = tlsn_new("tlsnotary.org");
-    prover.run(Handle::current().compat()).unwrap();
+    _ = Handle::current().enter();
+    let (prover, mut prover_socket) = tlsn_new("tlsnotary.org");
+    let (_, run_future) = prover.run().unwrap();
+    let _join_handle = tokio::spawn(run_future);
 
     // First we need to parse the response header again
-    prover_handle
+    prover_socket
             .write_all(
                     b"GET / HTTP/1.1\r\n\
                     Host: tlsnotary.org\r\n\
@@ -44,8 +47,7 @@ async fn test_prover_run_parse_response_body() {
                     Accept-Encoding: identity\r\n\r\n"
                 ).await.unwrap();
 
-    _ = Handle::current().enter();
-    let (response_headers, prover_handle) = tokio::spawn(parse_response_headers(prover_handle))
+    let (response_headers, prover_socket) = tokio::spawn(parse_response_headers(prover_socket))
         .await
         .unwrap();
     let mut parsed_headers = String::from_utf8(response_headers).unwrap();
@@ -68,7 +70,7 @@ async fn test_prover_run_parse_response_body() {
     // get the remaining body length
     let body_start = parsed_headers.find("\r\n\r\n").unwrap() + 4;
     content_length -= parsed_headers.len() - body_start;
-    let response_body = tokio::spawn(parse_response_body(prover_handle, content_length))
+    let response_body = tokio::spawn(parse_response_body(prover_socket, content_length))
         .await
         .unwrap();
 
@@ -83,10 +85,12 @@ async fn test_prover_run_parse_response_body() {
 
 #[tokio::test]
 async fn test_prover_close_notify() {
-    let (mut prover, mut prover_handle) = tlsn_new("tlsnotary.org");
-    prover.run(Handle::current().compat()).unwrap();
+    _ = Handle::current().enter();
+    let (prover, mut prover_socket) = tlsn_new("tlsnotary.org");
+    let (_, run_future) = prover.run().unwrap();
+    let join_handle = tokio::spawn(run_future);
 
-    prover_handle
+    prover_socket
             .write_all(
                     b"GET / HTTP/1.1\r\n\
                     Host: tlsnotary.org\r\n\
@@ -97,16 +101,20 @@ async fn test_prover_close_notify() {
                 ).await.unwrap();
 
     _ = Handle::current().enter();
-    let (response_headers, mut prover_handle) = tokio::spawn(parse_response_headers(prover_handle))
+    let (response_headers, mut prover_socket) = tokio::spawn(parse_response_headers(prover_socket))
         .await
         .unwrap();
     let _parsed_headers = String::from_utf8(response_headers).unwrap();
 
-    prover_handle.close_tls().unwrap();
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    prover_socket.close_tls().unwrap();
+
+    // TODO: This is some internal wrong handling of close_notify in `tls_client/src/backend/standard.rs` line 436
+    // We should not treat close_notify alert as an error since we use it in our protocol to force
+    // closing the connection
+    join_handle.await.unwrap_err();
 
     // This should fail, since we closed the tls connection
-    let expected_error = prover_handle
+    let expected_error = prover_socket
             .write_all(
                     b"GET / HTTP/1.1\r\n\
                     Host: tlsnotary.org\r\n\
@@ -119,11 +127,11 @@ async fn test_prover_close_notify() {
     assert!(matches!(expected_error, Err(std::io::Error { .. })));
 }
 
-fn tlsn_new(address: &str) -> (Prover, ProverHandle) {
+fn tlsn_new(address: &str) -> (Prover, Socket) {
     let tcp_stream = std::net::TcpStream::connect(&format!("{}:{}", address, "443")).unwrap();
     tcp_stream.set_nonblocking(true).unwrap();
 
-    let (prover, prover_handle) = Prover::new(
+    let (prover, prover_socket) = Prover::new(
         ProverConfig::default(),
         address.to_owned(),
         Box::new(RustCryptoBackend::new()) as Box<dyn Backend>,
@@ -131,16 +139,16 @@ fn tlsn_new(address: &str) -> (Prover, ProverHandle) {
     )
     .unwrap();
 
-    (prover, prover_handle)
+    (prover, prover_socket)
 }
 
-async fn parse_response_headers(mut prover_handle: ProverHandle) -> (Vec<u8>, ProverHandle) {
+async fn parse_response_headers(mut prover_socket: Socket) -> (Vec<u8>, Socket) {
     let headers_end_marker = b"\r\n\r\n";
     let mut response_headers = vec![0; 1024];
     let mut read_bytes = 0;
 
     loop {
-        read_bytes += prover_handle
+        read_bytes += prover_socket
             .read(&mut response_headers[read_bytes..])
             .await
             .unwrap();
@@ -158,11 +166,11 @@ async fn parse_response_headers(mut prover_handle: ProverHandle) -> (Vec<u8>, Pr
     }
     response_headers.resize(read_bytes, 0);
 
-    (response_headers, prover_handle)
+    (response_headers, prover_socket)
 }
 
-async fn parse_response_body(mut prover_handle: ProverHandle, content_length: usize) -> Vec<u8> {
+async fn parse_response_body(mut prover_socket: Socket, content_length: usize) -> Vec<u8> {
     let mut response_body: Vec<u8> = vec![0; content_length];
-    prover_handle.read_exact(&mut response_body).await.unwrap();
+    prover_socket.read_exact(&mut response_body).await.unwrap();
     response_body
 }
