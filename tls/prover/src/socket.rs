@@ -18,14 +18,14 @@ use tokio_util::{
 
 use crate::ProverError;
 
-pub struct ProverHandle {
+pub struct Socket {
     sink_writer:
         Compat<SinkWriter<CopyToBytes<SinkMapErr<Sender<Bytes>, fn(SendError) -> std::io::Error>>>>,
     stream_reader: Compat<StreamReader<Receiver<Result<Bytes, std::io::Error>>, Bytes>>,
     close_tls_sender: Option<OneshotSender<()>>,
 }
 
-impl ProverHandle {
+impl Socket {
     pub fn new(
         request_sender: Sender<Bytes>,
         response_receiver: Receiver<Result<Bytes, std::io::Error>>,
@@ -54,7 +54,7 @@ impl ProverHandle {
     }
 }
 
-impl AsyncRead for ProverHandle {
+impl AsyncRead for Socket {
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -64,7 +64,7 @@ impl AsyncRead for ProverHandle {
     }
 }
 
-impl AsyncWrite for ProverHandle {
+impl AsyncWrite for Socket {
     fn poll_write(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,

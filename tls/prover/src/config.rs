@@ -2,7 +2,7 @@ use tls_client::{ClientConfig, OwnedTrustAnchor, RootCertStore};
 
 pub struct ProverConfig {
     pub client_config: ClientConfig,
-    // ...
+    pub prover_run_id: String, // ...
 }
 
 impl Default for ProverConfig {
@@ -12,7 +12,10 @@ impl Default for ProverConfig {
             .with_root_certificates(add_mozilla_roots())
             .with_no_client_auth();
 
-        Self { client_config }
+        Self {
+            client_config,
+            prover_run_id: String::from("default_id"),
+        }
     }
 }
 

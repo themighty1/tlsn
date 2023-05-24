@@ -6,10 +6,11 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-futures.workspace = true
 tlsn-tls-client = { path = "../tls-client" }
 tlsn-utils-aio = { path = "../../utils/utils-aio" }
-tlsn-core = { path = "../../tlsn-core" }
+tlsn-core = { path = "../../tlsn/tlsn-core" }
+
+futures.workspace = true
 thiserror.workspace = true
 webpki-roots.workspace = true
 tokio = { workspace = true, features = ["sync"] }
