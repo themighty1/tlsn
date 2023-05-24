@@ -1,13 +1,23 @@
-use futures::Future;
+use futures::{
+    channel::oneshot::{Receiver, Sender},
+    Future,
+};
 use std::pin::Pin;
 use tlsn_core::transcript::TranscriptSet;
 
 pub struct Initialized {
     pub(crate) run_future: Option<Pin<Box<dyn Future<Output = ()> + Send + 'static>>>,
+    pub(crate) transcript_receiver: Receiver<TranscriptSet>,
+    pub(crate) close_tls_sender: Sender<()>,
 }
 
-pub struct Running;
+#[derive(Debug)]
+pub struct Running {
+    pub(crate) transcript_receiver: Receiver<TranscriptSet>,
+    pub(crate) close_tls_sender: Sender<()>,
+}
 
+#[derive(Debug)]
 pub struct Finalized {
     pub(crate) transcript: TranscriptSet,
 }
