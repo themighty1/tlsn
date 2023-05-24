@@ -39,12 +39,16 @@ impl Prover<Initialized> {
         let tls_conn = Mutex::new(ClientConnection::new(client_config, backend, server_name)?);
 
         let run_future = async move {
+            let mut sent_data: Vec<u8> = Vec::new();
+            let mut received_data: Vec<u8> = Vec::new();
+
             tls_conn.lock().await.start().await.unwrap();
             loop {
                 select! {
                     request = request_receiver.select_next_some() => {
                         let mut tls_conn = tls_conn.lock().await;
-                        tls_conn.write_all_plaintext(request.as_ref()).await.unwrap();
+                        let written = sent_data.write(request.as_ref()).unwrap();
+                        tls_conn.write_all_plaintext(&sent_data[sent_data.len() - written..]).await.unwrap();
                     },
                     mut tls_conn = tls_conn.lock().fuse() =>  {
                         if tls_conn.wants_write() {
@@ -65,13 +69,17 @@ impl Prover<Initialized> {
                         }
                     },
                     mut tls_conn = tls_conn.lock().fuse() =>  {
-                        let mut response = Vec::new();
-                        match tls_conn.reader().read_to_end(&mut response) {
+                        // TODO: It is not so easy to get the length of the data that was read
+                        // so we do it by checking the length before and afterwards
+                        let received_data_len_before_read = received_data.len();
+                        match tls_conn.reader().read_to_end(&mut received_data) {
                                 Ok(_) => (),
                                 Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => (),
                                 Err(err) => panic!("{}", err)
                             }
-                        if !response.is_empty() {
+                        let read = received_data.len() - received_data_len_before_read;
+                        if read > 0 {
+                            let response = received_data.split_at(received_data.len() - read).1.to_vec();
                             response_sender.send(Ok(response.into())).await.unwrap();
                         }
                     }
