@@ -3,8 +3,16 @@ use prover::{Prover, ProverConfig, ReadWrite, Socket};
 use tls_client::{Backend, RustCryptoBackend};
 use tokio::runtime::Handle;
 
+const TLSN_TEST_REQUEST: &[u8] = 
+                    b"GET / HTTP/1.1\r\n\
+                    Host: tlsnotary.org\r\n\
+                    User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/112.0\r\n\
+                    Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8\r\n\
+                    Accept-Language: en-US,en;q=0.5\r\n\
+                    Accept-Encoding: identity\r\n\r\n";
+
 #[tokio::test]
-async fn test_prover_run_parse_response_headers() {
+async fn test_prover_parse_response_headers() {
     _ = Handle::current().enter();
 
     let (prover, mut prover_socket) = tlsn_new("tlsnotary.org");
@@ -12,14 +20,7 @@ async fn test_prover_run_parse_response_headers() {
     let _join_handle = tokio::spawn(run_future);
 
     prover_socket
-            .write_all(
-                    b"GET / HTTP/1.1\r\n\
-                    Host: tlsnotary.org\r\n\
-                    User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/112.0\r\n\
-                    Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8\r\n\
-                    Accept-Language: en-US,en;q=0.5\r\n\
-                    Accept-Encoding: identity\r\n\r\n"
-                ).await.unwrap();
+            .write_all(TLSN_TEST_REQUEST).await.unwrap();
 
     let (response_headers, _) = tokio::spawn(parse_response_headers(prover_socket))
         .await
@@ -30,22 +31,16 @@ async fn test_prover_run_parse_response_headers() {
 }
 
 #[tokio::test]
-async fn test_prover_run_parse_response_body() {
+async fn test_prover_parse_response_body() {
     _ = Handle::current().enter();
+
     let (prover, mut prover_socket) = tlsn_new("tlsnotary.org");
     let (_, run_future) = prover.run().unwrap();
     let _join_handle = tokio::spawn(run_future);
 
     // First we need to parse the response header again
     prover_socket
-            .write_all(
-                    b"GET / HTTP/1.1\r\n\
-                    Host: tlsnotary.org\r\n\
-                    User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/112.0\r\n\
-                    Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8\r\n\
-                    Accept-Language: en-US,en;q=0.5\r\n\
-                    Accept-Encoding: identity\r\n\r\n"
-                ).await.unwrap();
+            .write_all(TLSN_TEST_REQUEST).await.unwrap();
 
     let (response_headers, prover_socket) = tokio::spawn(parse_response_headers(prover_socket))
         .await
@@ -86,19 +81,13 @@ async fn test_prover_run_parse_response_body() {
 #[tokio::test]
 async fn test_prover_close_notify() {
     _ = Handle::current().enter();
+
     let (prover, mut prover_socket) = tlsn_new("tlsnotary.org");
     let (_, run_future) = prover.run().unwrap();
     let join_handle = tokio::spawn(run_future);
 
     prover_socket
-            .write_all(
-                    b"GET / HTTP/1.1\r\n\
-                    Host: tlsnotary.org\r\n\
-                    User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/112.0\r\n\
-                    Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8\r\n\
-                    Accept-Language: en-US,en;q=0.5\r\n\
-                    Accept-Encoding: identity\r\n\r\n"
-                ).await.unwrap();
+            .write_all(TLSN_TEST_REQUEST).await.unwrap();
 
     _ = Handle::current().enter();
     let (response_headers, mut prover_socket) = tokio::spawn(parse_response_headers(prover_socket))
@@ -115,16 +104,59 @@ async fn test_prover_close_notify() {
 
     // This should fail, since we closed the tls connection
     let expected_error = prover_socket
-            .write_all(
-                    b"GET / HTTP/1.1\r\n\
-                    Host: tlsnotary.org\r\n\
-                    User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/112.0\r\n\
-                    Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8\r\n\
-                    Accept-Language: en-US,en;q=0.5\r\n\
-                    Accept-Encoding: identity\r\n\r\n"
-                ).await;
+            .write_all(TLSN_TEST_REQUEST).await;
 
     assert!(matches!(expected_error, Err(std::io::Error { .. })));
+}
+
+#[tokio::test]
+async fn test_prover_transcript() {
+    _ = Handle::current().enter();
+
+    let (prover, mut prover_socket) = tlsn_new("tlsnotary.org");
+    let (_, run_future) = prover.run().unwrap();
+    let _join_handle = tokio::spawn(run_future);
+
+    // First we need to parse the response header again
+    prover_socket
+            .write_all(TLSN_TEST_REQUEST).await.unwrap();
+
+    let (response_headers, prover_socket) = tokio::spawn(parse_response_headers(prover_socket))
+        .await
+        .unwrap();
+    let mut parsed_headers = String::from_utf8(response_headers).unwrap();
+
+    // Extract content length from response headers
+    let content_length_header: &str = "Content-Length: ";
+    let content_length_start =
+        parsed_headers.find(content_length_header).unwrap() + content_length_header.len();
+    let content_length_len = parsed_headers[content_length_start..].find("\r\n").unwrap();
+
+    // Now parse content length to usize
+    let mut content_length = parsed_headers
+        [content_length_start..content_length_start + content_length_len]
+        .parse::<usize>()
+        .unwrap();
+
+    // Parse response body until content length is reached
+    //
+    // We need subtract the body part which is already in the parsed headers from content length to
+    // get the remaining body length
+    let body_start = parsed_headers.find("\r\n\r\n").unwrap() + 4;
+    content_length -= parsed_headers.len() - body_start;
+    let response_body = tokio::spawn(parse_response_body(prover_socket, content_length))
+        .await
+        .unwrap();
+
+    // Convert parsed bytes to utf8 and also add the header part which did include some body parts
+    let parsed_body =
+        parsed_headers.split_off(body_start) + &String::from_utf8(response_body).unwrap();
+
+    let expected_transcript_sent = "";
+    let expected_transcript_received = "";
+
+    assert_eq!(expected_transcript_sent, std::str::from_utf8(TLSN_TEST_REQUEST).unwrap());
+    assert_eq!(expected_transcript_received, parsed_headers + parsed_body.as_str());
 }
 
 fn tlsn_new(address: &str) -> (Prover, Socket) {

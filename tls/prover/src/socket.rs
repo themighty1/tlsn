@@ -84,6 +84,8 @@ impl AsyncWrite for Socket {
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
     ) -> Poll<Result<(), std::io::Error>> {
+        self.close_tls()
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
         Pin::new(&mut self.sink_writer).poll_close(cx)
     }
 }
