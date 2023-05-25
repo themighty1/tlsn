@@ -1,10 +1,21 @@
 [workspace]
-members = ["tlsn-core"]
+members = ["tlsn-core", "prover"]
 
 [workspace.dependencies]
 tlsn-core = { path = "tlsn-core" }
-
 tlsn-mpc-core = { path = "../mpc/mpc-core" }
 tlsn-mpc-circuits = { path = "../mpc/mpc-circuits" }
 tlsn-mpc-garble-core = { path = "../mpc/garble/mpc-garble-core" }
 tlsn-utils = { path = "../utils/utils" }
+tls-mpc = { path = "../tls/tls-mpc" }
+tlsn-tls-client = { path = "../tls/tls-client" }
+tlsn-utils-aio = { path = "../utils/utils-aio" }
+tlsn-mpc-share-conversion = { path = "../mpc/share-conversion/mpc-share-conversion" }
+actor-ot = { path = "../actors/actor-ot"}
+
+bytes = "1"
+futures = "0.3"
+thiserror = "1"
+tokio = "1.23"
+tokio-util = "0.7"
+webpki-roots = "0.23"
