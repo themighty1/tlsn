@@ -12,7 +12,7 @@ const TLSN_TEST_REQUEST: &[u8] =
                     Accept-Encoding: identity\r\n\r\n";
 
 #[tokio::test]
-async fn test_prover_parse_response_headers() {
+async fn test_prover_parse_headers() {
     _ = Handle::current().enter();
 
     let (prover, mut prover_socket) = tlsn_new("tlsnotary.org");
@@ -31,7 +31,7 @@ async fn test_prover_parse_response_headers() {
 }
 
 #[tokio::test]
-async fn test_prover_parse_response_body() {
+async fn test_prover_parse_body() {
     _ = Handle::current().enter();
 
     let (prover, mut prover_socket) = tlsn_new("tlsnotary.org");

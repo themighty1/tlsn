@@ -1,8 +1,14 @@
+use actor_ot::{create_ot_pair, OTActorReceiverConfig, OTActorSenderConfig};
 use tls_client::{ClientConfig, OwnedTrustAnchor, RootCertStore};
+use tls_mpc::MpcTlsLeaderConfig;
 
 pub struct ProverConfig {
     pub client_config: ClientConfig,
-    pub prover_run_id: String, // ...
+    pub mpc_config: MpcTlsLeaderConfig,
+    pub ot_sender_config: OTActorSenderConfig,
+    pub ot_receiver_config: OTActorReceiverConfig,
+    pub prover_run_id: String,
+    // ...
 }
 
 impl Default for ProverConfig {
