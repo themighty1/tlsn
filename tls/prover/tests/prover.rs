@@ -45,33 +45,10 @@ async fn test_prover_parse_response_body() {
     let (response_headers, prover_socket) = tokio::spawn(parse_response_headers(prover_socket))
         .await
         .unwrap();
-    let mut parsed_headers = String::from_utf8(response_headers).unwrap();
-
-    // Extract content length from response headers
-    let content_length_header: &str = "Content-Length: ";
-    let content_length_start =
-        parsed_headers.find(content_length_header).unwrap() + content_length_header.len();
-    let content_length_len = parsed_headers[content_length_start..].find("\r\n").unwrap();
-
-    // Now parse content length to usize
-    let mut content_length = parsed_headers
-        [content_length_start..content_length_start + content_length_len]
-        .parse::<usize>()
-        .unwrap();
-
-    // Parse response body until content length is reached
-    //
-    // We need subtract the body part which is already in the parsed headers from content length to
-    // get the remaining body length
-    let body_start = parsed_headers.find("\r\n\r\n").unwrap() + 4;
-    content_length -= parsed_headers.len() - body_start;
-    let response_body = tokio::spawn(parse_response_body(prover_socket, content_length))
+    let parsed_headers = String::from_utf8(response_headers).unwrap();
+    let (_, parsed_body) = tokio::spawn(parse_response_body_and_adapt_headers(prover_socket, parsed_headers))
         .await
         .unwrap();
-
-    // Convert parsed bytes to utf8 and also add the header part which did include some body parts
-    let parsed_body =
-        parsed_headers.split_off(body_start) + &String::from_utf8(response_body).unwrap();
 
     assert!(parsed_body.contains("<!DOCTYPE html>"));
     assert!(parsed_body.contains("TLSNotary is a public good"));
@@ -90,11 +67,9 @@ async fn test_prover_close_notify() {
             .write_all(TLSN_TEST_REQUEST).await.unwrap();
 
     _ = Handle::current().enter();
-    let (response_headers, mut prover_socket) = tokio::spawn(parse_response_headers(prover_socket))
+    let (_response_headers, mut prover_socket) = tokio::spawn(parse_response_headers(prover_socket))
         .await
         .unwrap();
-
-    let _parsed_headers = String::from_utf8(response_headers).unwrap();
 
     prover.finalize().await.unwrap();
 
@@ -120,40 +95,15 @@ async fn test_prover_transcript() {
     let (response_headers, prover_socket) = tokio::spawn(parse_response_headers(prover_socket))
         .await
         .unwrap();
-    let mut parsed_headers = String::from_utf8(response_headers).unwrap();
-
-    // Extract content length from response headers
-    let content_length_header: &str = "Content-Length: ";
-    let content_length_start =
-        parsed_headers.find(content_length_header).unwrap() + content_length_header.len();
-    let content_length_len = parsed_headers[content_length_start..].find("\r\n").unwrap();
-
-    // Now parse content length to usize
-    let mut content_length = parsed_headers
-        [content_length_start..content_length_start + content_length_len]
-        .parse::<usize>()
-        .unwrap();
-
-    // Parse response body until content length is reached
-    //
-    // We need subtract the body part which is already in the parsed headers from content length to
-    // get the remaining body length
-    let body_start = parsed_headers.find("\r\n\r\n").unwrap() + 4;
-    content_length -= parsed_headers.len() - body_start;
-    let response_body = tokio::spawn(parse_response_body(prover_socket, content_length))
-        .await
-        .unwrap();
+    let parsed_headers = String::from_utf8(response_headers).unwrap();
+    let (parsed_headers, parsed_body) = tokio::spawn(parse_response_body_and_adapt_headers(prover_socket, parsed_headers)).await.unwrap();
 
     let prover = prover.finalize().await.unwrap();
-
-    // Convert parsed bytes to utf8 and also add the header part which did include some body parts
-    let parsed_body =
-        parsed_headers.split_off(body_start) + &String::from_utf8(response_body).unwrap();
 
     let expected_transcript_sent = prover.transcript().get_by_id("tx").unwrap().data();
     let expected_transcript_received = prover.transcript().get_by_id("rx").unwrap().data(); 
 
-    assert_eq!(std::str::from_utf8(expected_transcript_sent), std::str::from_utf8(TLSN_TEST_REQUEST));
+    assert_eq!(expected_transcript_sent, TLSN_TEST_REQUEST);
     assert_eq!(expected_transcript_received, (parsed_headers + parsed_body.as_str()).as_bytes());
 }
 
@@ -199,8 +149,32 @@ async fn parse_response_headers(mut prover_socket: Socket) -> (Vec<u8>, Socket) 
     (response_headers, prover_socket)
 }
 
-async fn parse_response_body(mut prover_socket: Socket, content_length: usize) -> Vec<u8> {
+async fn parse_response_body_and_adapt_headers(mut prover_socket: Socket, mut parsed_headers: String) -> (String, String) {
+    // Extract content length from response headers
+    let content_length_header: &str = "Content-Length: ";
+    let content_length_start =
+        parsed_headers.find(content_length_header).unwrap() + content_length_header.len();
+    let content_length_len = parsed_headers[content_length_start..].find("\r\n").unwrap();
+
+    // Now parse content length to usize
+    let mut content_length = parsed_headers
+        [content_length_start..content_length_start + content_length_len]
+        .parse::<usize>()
+        .unwrap();
+
+    // Parse response body until content length is reached
+    //
+    // We need subtract the body part which is already in the parsed headers from content length to
+    // get the remaining body length
+    let body_start = parsed_headers.find("\r\n\r\n").unwrap() + 4;
+    content_length -= parsed_headers.len() - body_start;
+
     let mut response_body: Vec<u8> = vec![0; content_length];
     prover_socket.read_exact(&mut response_body).await.unwrap();
-    response_body
+
+    // Convert parsed bytes to utf8 and also add the header part which did include some body parts
+    let parsed_body =
+        parsed_headers.split_off(body_start) + &String::from_utf8(response_body).unwrap();
+
+    (parsed_headers, parsed_body)
 }
