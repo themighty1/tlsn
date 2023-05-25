@@ -101,8 +101,8 @@ impl Prover<Initialized> {
                             Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => (),
                             Err(err) => panic!("{}", err)
                         }
-                        let transcript_received = Transcript::new("tx", received_data);
-                        let transcript_sent = Transcript::new("rx", sent_data);
+                        let transcript_received = Transcript::new("rx", received_data);
+                        let transcript_sent = Transcript::new("tx", sent_data);
 
                         let transcript_set = TranscriptSet::new(&[transcript_sent, transcript_received]);
                         transcript_sender.send(transcript_set).unwrap();

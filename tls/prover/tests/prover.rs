@@ -153,7 +153,7 @@ async fn test_prover_transcript() {
     let expected_transcript_sent = prover.transcript().get_by_id("tx").unwrap().data();
     let expected_transcript_received = prover.transcript().get_by_id("rx").unwrap().data(); 
 
-    assert_eq!(expected_transcript_sent, TLSN_TEST_REQUEST);
+    assert_eq!(std::str::from_utf8(expected_transcript_sent), std::str::from_utf8(TLSN_TEST_REQUEST));
     assert_eq!(expected_transcript_received, (parsed_headers + parsed_body.as_str()).as_bytes());
 }
 
