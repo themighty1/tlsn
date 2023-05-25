@@ -1,5 +1,5 @@
 use futures::{AsyncReadExt, AsyncWriteExt};
-use prover::{Prover, ProverConfig, ReadWrite, Socket};
+use prover::{Prover, ProverConfig, ReadWrite, TLSConnection};
 use tls_client::{Backend, RustCryptoBackend};
 use tokio::runtime::Handle;
 
@@ -15,14 +15,14 @@ const TLSN_TEST_REQUEST: &[u8] =
 async fn test_prover_parse_headers() {
     _ = Handle::current().enter();
 
-    let (prover, mut prover_socket) = tlsn_new("tlsnotary.org");
+    let (prover, mut tls_connection) = tlsn_new("tlsnotary.org");
     let (_, run_future) = prover.run().unwrap();
     tokio::spawn(run_future);
 
-    prover_socket
+    tls_connection
             .write_all(TLSN_TEST_REQUEST).await.unwrap();
 
-    let (response_headers, _) = tokio::spawn(parse_response_headers(prover_socket))
+    let (response_headers, _) = tokio::spawn(parse_response_headers(tls_connection))
         .await
         .unwrap();
     let parsed_headers = String::from_utf8(response_headers).unwrap();
@@ -34,19 +34,19 @@ async fn test_prover_parse_headers() {
 async fn test_prover_parse_body() {
     _ = Handle::current().enter();
 
-    let (prover, mut prover_socket) = tlsn_new("tlsnotary.org");
+    let (prover, mut tls_connection) = tlsn_new("tlsnotary.org");
     let (_, run_future) = prover.run().unwrap();
     tokio::spawn(run_future);
 
     // First we need to parse the response header again
-    prover_socket
+    tls_connection
             .write_all(TLSN_TEST_REQUEST).await.unwrap();
 
-    let (response_headers, prover_socket) = tokio::spawn(parse_response_headers(prover_socket))
+    let (response_headers, tls_connection) = tokio::spawn(parse_response_headers(tls_connection))
         .await
         .unwrap();
     let parsed_headers = String::from_utf8(response_headers).unwrap();
-    let (_, parsed_body) = tokio::spawn(parse_response_body_and_adapt_headers(prover_socket, parsed_headers))
+    let (_, parsed_body) = tokio::spawn(parse_response_body_and_adapt_headers(tls_connection, parsed_headers))
         .await
         .unwrap();
 
@@ -59,22 +59,22 @@ async fn test_prover_parse_body() {
 async fn test_prover_close_notify() {
     _ = Handle::current().enter();
 
-    let (prover, mut prover_socket) = tlsn_new("tlsnotary.org");
+    let (prover, mut tls_connection) = tlsn_new("tlsnotary.org");
     let (prover, run_future) = prover.run().unwrap();
     tokio::spawn(run_future);
 
-    prover_socket
+    tls_connection
             .write_all(TLSN_TEST_REQUEST).await.unwrap();
 
     _ = Handle::current().enter();
-    let (_response_headers, mut prover_socket) = tokio::spawn(parse_response_headers(prover_socket))
+    let (_response_headers, mut tls_connection) = tokio::spawn(parse_response_headers(tls_connection))
         .await
         .unwrap();
 
     prover.finalize().await.unwrap();
 
     // This should fail, since we closed the tls connection
-    let expected_error = prover_socket
+    let expected_error = tls_connection
             .write_all(TLSN_TEST_REQUEST).await;
 
     assert!(matches!(expected_error, Err(std::io::Error { .. })));
@@ -84,19 +84,19 @@ async fn test_prover_close_notify() {
 async fn test_prover_transcript() {
     _ = Handle::current().enter();
 
-    let (prover, mut prover_socket) = tlsn_new("tlsnotary.org");
+    let (prover, mut tls_connection) = tlsn_new("tlsnotary.org");
     let (prover, run_future) = prover.run().unwrap();
     tokio::spawn(run_future);
 
     // First we need to parse the response header again
-    prover_socket
+    tls_connection
             .write_all(TLSN_TEST_REQUEST).await.unwrap();
 
-    let (response_headers, prover_socket) = tokio::spawn(parse_response_headers(prover_socket))
+    let (response_headers, tls_connection) = tokio::spawn(parse_response_headers(tls_connection))
         .await
         .unwrap();
     let parsed_headers = String::from_utf8(response_headers).unwrap();
-    let (parsed_headers, parsed_body) = tokio::spawn(parse_response_body_and_adapt_headers(prover_socket, parsed_headers)).await.unwrap();
+    let (parsed_headers, parsed_body) = tokio::spawn(parse_response_body_and_adapt_headers(tls_connection, parsed_headers)).await.unwrap();
 
     let prover = prover.finalize().await.unwrap();
 
@@ -107,11 +107,11 @@ async fn test_prover_transcript() {
     assert_eq!(expected_transcript_received, (parsed_headers + parsed_body.as_str()).as_bytes());
 }
 
-fn tlsn_new(address: &str) -> (Prover, Socket) {
+fn tlsn_new(address: &str) -> (Prover, TLSConnection) {
     let tcp_stream = std::net::TcpStream::connect(&format!("{}:{}", address, "443")).unwrap();
     tcp_stream.set_nonblocking(true).unwrap();
 
-    let (prover, prover_socket) = Prover::new(
+    let (prover, tls_connection) = Prover::new(
         ProverConfig::default(),
         address.to_owned(),
         Box::new(RustCryptoBackend::new()) as Box<dyn Backend>,
@@ -119,16 +119,16 @@ fn tlsn_new(address: &str) -> (Prover, Socket) {
     )
     .unwrap();
 
-    (prover, prover_socket)
+    (prover, tls_connection)
 }
 
-async fn parse_response_headers(mut prover_socket: Socket) -> (Vec<u8>, Socket) {
+async fn parse_response_headers(mut tls_connection: TLSConnection) -> (Vec<u8>, TLSConnection) {
     let headers_end_marker = b"\r\n\r\n";
     let mut response_headers = vec![0; 1024];
     let mut read_bytes = 0;
 
     loop {
-        read_bytes += prover_socket
+        read_bytes += tls_connection
             .read(&mut response_headers[read_bytes..])
             .await
             .unwrap();
@@ -146,10 +146,10 @@ async fn parse_response_headers(mut prover_socket: Socket) -> (Vec<u8>, Socket) 
     }
     response_headers.resize(read_bytes, 0);
 
-    (response_headers, prover_socket)
+    (response_headers, tls_connection)
 }
 
-async fn parse_response_body_and_adapt_headers(mut prover_socket: Socket, mut parsed_headers: String) -> (String, String) {
+async fn parse_response_body_and_adapt_headers(mut tls_connection: TLSConnection, mut parsed_headers: String) -> (String, String) {
     // Extract content length from response headers
     let content_length_header: &str = "Content-Length: ";
     let content_length_start =
@@ -170,7 +170,7 @@ async fn parse_response_body_and_adapt_headers(mut prover_socket: Socket, mut pa
     content_length -= parsed_headers.len() - body_start;
 
     let mut response_body: Vec<u8> = vec![0; content_length];
-    prover_socket.read_exact(&mut response_body).await.unwrap();
+    tls_connection.read_exact(&mut response_body).await.unwrap();
 
     // Convert parsed bytes to utf8 and also add the header part which did include some body parts
     let parsed_body =
