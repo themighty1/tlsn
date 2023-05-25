@@ -9,6 +9,8 @@ edition = "2021"
 tlsn-tls-client = { path = "../tls-client" }
 tlsn-utils-aio = { path = "../../utils/utils-aio" }
 tlsn-core = { path = "../../tlsn/tlsn-core" }
+tls-mpc = { path = "../tls-mpc" }
+actor-ot = { path = "../../actors/actor-ot"}
 
 futures.workspace = true
 thiserror.workspace = true
