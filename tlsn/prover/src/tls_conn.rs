@@ -1,6 +1,9 @@
 use bytes::Bytes;
 use futures::{
-    channel::mpsc::{Receiver, SendError, Sender},
+    channel::{
+        mpsc::{Receiver, SendError, Sender},
+        oneshot::Sender as OneshotSender,
+    },
     sink::SinkMapErr,
     AsyncRead, AsyncWrite, SinkExt,
 };
@@ -13,16 +16,18 @@ use tokio_util::{
     io::{CopyToBytes, SinkWriter, StreamReader},
 };
 
-pub struct Socket {
+pub struct TLSConnection {
     sink_writer:
         Compat<SinkWriter<CopyToBytes<SinkMapErr<Sender<Bytes>, fn(SendError) -> std::io::Error>>>>,
     stream_reader: Compat<StreamReader<Receiver<Result<Bytes, std::io::Error>>, Bytes>>,
+    close_tls_sender: OneshotSender<()>,
 }
 
-impl Socket {
+impl TLSConnection {
     pub fn new(
         request_sender: Sender<Bytes>,
         response_receiver: Receiver<Result<Bytes, std::io::Error>>,
+        close_tls_sender: OneshotSender<()>,
     ) -> Self {
         fn convert_error(err: SendError) -> std::io::Error {
             std::io::Error::new(std::io::ErrorKind::Other, err)
@@ -34,11 +39,12 @@ impl Socket {
             ))
             .compat_write(),
             stream_reader: StreamReader::new(response_receiver).compat(),
+            close_tls_sender,
         }
     }
 }
 
-impl AsyncRead for Socket {
+impl AsyncRead for TLSConnection {
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -48,7 +54,7 @@ impl AsyncRead for Socket {
     }
 }
 
-impl AsyncWrite for Socket {
+impl AsyncWrite for TLSConnection {
     fn poll_write(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -68,6 +74,9 @@ impl AsyncWrite for Socket {
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
     ) -> Poll<Result<(), std::io::Error>> {
+        self.close_tls_sender.send(()).map_err(|_| {
+            std::io::Error::new(std::io::ErrorKind::Other, "Unable to close TLSConnection")
+        })?;
         Pin::new(&mut self.sink_writer).poll_close(cx)
     }
 }
