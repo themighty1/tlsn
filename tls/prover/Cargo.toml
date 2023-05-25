@@ -8,6 +8,7 @@ edition = "2021"
 [dependencies]
 tlsn-tls-client = { path = "../tls-client" }
 tlsn-utils-aio = { path = "../../utils/utils-aio" }
+tlsn-mpc-share-conversion = { path = "../../mpc/share-conversion/mpc-share-conversion" }
 tlsn-core = { path = "../../tlsn/tlsn-core" }
 tls-mpc = { path = "../tls-mpc" }
 actor-ot = { path = "../../actors/actor-ot"}
