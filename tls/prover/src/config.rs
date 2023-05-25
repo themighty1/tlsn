@@ -1,13 +1,14 @@
-use actor_ot::{create_ot_pair, OTActorReceiverConfig, OTActorSenderConfig};
+use actor_ot::{OTActorReceiverConfig, OTActorSenderConfig};
+use mpc_share_conversion::{ReceiverConfig, SenderConfig};
 use tls_client::{ClientConfig, OwnedTrustAnchor, RootCertStore};
-use tls_mpc::MpcTlsLeaderConfig;
+use tls_mpc::{MpcTlsCommonConfig, MpcTlsLeaderConfig};
 
 pub struct ProverConfig {
     pub client_config: ClientConfig,
     pub mpc_config: MpcTlsLeaderConfig,
-    pub ot_sender_config: OTActorSenderConfig,
-    pub ot_receiver_config: OTActorReceiverConfig,
-    pub prover_run_id: String,
+    pub ot_config: (OTActorSenderConfig, OTActorReceiverConfig),
+    pub p256_config: (SenderConfig, ReceiverConfig),
+    pub gf2_config: SenderConfig,
     // ...
 }
 
@@ -17,10 +18,34 @@ impl Default for ProverConfig {
             .with_safe_defaults()
             .with_root_certificates(add_mozilla_roots())
             .with_no_client_auth();
+        let ot_sender_config = OTActorSenderConfig::builder()
+            .id("ot/0")
+            .initial_count(200_000)
+            .build()
+            .unwrap();
+        let ot_receiver_config = OTActorReceiverConfig::builder()
+            .id("ot/0")
+            .initial_count(200_000)
+            .build()
+            .unwrap();
+        let p256_config = (
+            SenderConfig::builder().id("p256/0").build().unwrap(),
+            ReceiverConfig::builder().id("p256/1").build().unwrap(),
+        );
+        let gf2_config = SenderConfig::builder().id("gf2").build().unwrap();
+
+        let common_config = MpcTlsCommonConfig::builder().id("tlsn").build().unwrap();
+        let mpc_config = MpcTlsLeaderConfig::builder()
+            .common(common_config.clone())
+            .build()
+            .unwrap();
 
         Self {
             client_config,
-            prover_run_id: String::from("default_id"),
+            mpc_config,
+            ot_config: (ot_sender_config, ot_receiver_config),
+            p256_config,
+            gf2_config,
         }
     }
 }
