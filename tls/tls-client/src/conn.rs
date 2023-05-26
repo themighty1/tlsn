@@ -8,6 +8,7 @@ use crate::{
     vecbuf::ChunkVecBuffer,
 };
 use async_trait::async_trait;
+use futures::pending;
 use std::{
     collections::VecDeque,
     convert::TryFrom,
@@ -27,6 +28,7 @@ use tls_core::{
     },
     suites::SupportedCipherSuite,
 };
+use tokio::sync::Notify;
 
 /// Values of this structure are returned from [`Connection::process_new_packets`]
 /// and tell the caller the current I/O state of the TLS connection.
@@ -636,6 +638,11 @@ impl CommonState {
         !self.sendable_tls.is_empty()
     }
 
+    /// Async version of [`CommonState::wants_write`]
+    pub async fn wants_write_async(&self) {
+        self.sendable_tls.has_been_written().await;
+    }
+
     /// Returns true if the connection is currently performing the TLS handshake.
     ///
     /// During this time plaintext written to the connection is buffered in memory. After
@@ -1065,6 +1072,14 @@ impl CommonState {
         self.received_plaintext.is_empty()
             && !self.has_received_close_notify
             && (self.may_send_application_data || self.sendable_tls.is_empty())
+    }
+
+    /// Async version of [`CommonState::wants_read`].
+    pub async fn wants_read_async(&self) -> bool {
+        if self.has_received_close_notify {
+            pending!()
+        }
+        self.received_plaintext.has_been_read().await;
     }
 
     fn current_io_state(&self) -> IoState {
