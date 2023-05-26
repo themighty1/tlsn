@@ -20,7 +20,7 @@ pub struct TLSConnection {
     sink_writer:
         Compat<SinkWriter<CopyToBytes<SinkMapErr<Sender<Bytes>, fn(SendError) -> std::io::Error>>>>,
     stream_reader: Compat<StreamReader<Receiver<Result<Bytes, std::io::Error>>, Bytes>>,
-    close_tls_sender: OneshotSender<()>,
+    close_tls_sender: Option<OneshotSender<()>>,
 }
 
 impl TLSConnection {
@@ -39,7 +39,7 @@ impl TLSConnection {
             ))
             .compat_write(),
             stream_reader: StreamReader::new(response_receiver).compat(),
-            close_tls_sender,
+            close_tls_sender: Some(close_tls_sender),
         }
     }
 }
@@ -74,7 +74,11 @@ impl AsyncWrite for TLSConnection {
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
     ) -> Poll<Result<(), std::io::Error>> {
-        self.close_tls_sender.send(()).map_err(|_| {
+        let close_tls_sender = self.close_tls_sender.take().ok_or(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            "TLSConnection already closed",
+        ))?;
+        close_tls_sender.send(()).map_err(|_| {
             std::io::Error::new(std::io::ErrorKind::Other, "Unable to close TLSConnection")
         })?;
         Pin::new(&mut self.sink_writer).poll_close(cx)

@@ -28,13 +28,13 @@ impl Prover<Initialized> {
         url: String,
         // TODO: Not pass into constructor, but method needed to construct this
         backend: Box<dyn Backend + Send + 'static>,
-        mut socket: Box<dyn ReadWrite + Send + 'static>,
+        socket: Box<dyn ReadWrite + Send + 'static>,
     ) -> Result<(Self, TLSConnection), ProverError> {
         let (request_sender, request_receiver) = channel::mpsc::channel::<Bytes>(10);
         let (response_sender, response_receiver) =
             channel::mpsc::channel::<Result<Bytes, std::io::Error>>(10);
-        let (close_tls_sender, mut close_tls_receiver) = channel::oneshot::channel::<()>();
-        let (transcript_sender, transcript_receiver) = channel::oneshot::channel::<TranscriptSet>();
+        let (close_tls_sender, close_tls_receiver) = channel::oneshot::channel::<()>();
+        // let (transcript_sender, transcript_receiver) = channel::oneshot::channel::<TranscriptSet>();
 
         let tls_conn = TLSConnection::new(request_sender, response_receiver, close_tls_sender);
 
@@ -65,17 +65,13 @@ impl Prover<Initialized> {
         let mut tls_client = self.0.tls_client;
         tls_client.start().await.unwrap();
 
-        let (ref mut notify_sender, ref mut notify_receiver) =
-            futures::channel::oneshot::channel::<()>();
         loop {
             select! {
                 request = request_receiver.select_next_some() => {
                     let written = sent_data.write(request.as_ref()).unwrap();
               tls_client.write_all_plaintext(&sent_data[sent_data.len() - written..]).await.unwrap();
-              (*notify_sender, *notify_receiver) = futures::channel::oneshot::channel::<()>();
-              notify_sender.send(()).unwrap();
                 },
-                _ = notify_receiver.fuse() =>  {
+                _ = futures::future::ready(()).fuse() =>  {
                     if tls_client.wants_write() {
                         match tls_client.write_tls(&mut self.0.socket) {
                             Ok(_) => (),
@@ -93,7 +89,7 @@ impl Prover<Initialized> {
                         tls_client.process_new_packets().await.unwrap();
                     }
                 },
-                tls_client = futures::future::ready(&mut tls_client).fuse() =>  {
+                _ = futures::future::ready(()).fuse() =>  {
                     // TODO: It is not so easy to get the length of the data that was read
                     // so we do it by checking the length before and afterwards
                     let received_data_len_before_read = received_data.len();
@@ -110,11 +106,11 @@ impl Prover<Initialized> {
                         response_sender.send(Ok(response.into())).await.unwrap();
                     }
                 }
-                _ = self.0.close_tls_receiver => {
+                _ = &mut self.0.close_tls_receiver => {
                     // TODO: This is some internal wrong handling of close_notify in `tls_client/src/backend/standard.rs` line 436
                     // We should not treat close_notify alert as an error since we use it in our protocol to force
                     // closing the connection
-                    tls_client.send_close_notify().await.unwrap_err();
+                    tls_client.send_close_notify().await.unwrap();
                     match tls_client.complete_io(&mut self.0.socket).await {
                         Ok(_) => (),
                         Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => (),
@@ -124,7 +120,7 @@ impl Prover<Initialized> {
                     let transcript_sent = Transcript::new("tx", sent_data);
 
                     let _transcript_set = TranscriptSet::new(&[transcript_sent, transcript_received]);
-                    //TODO Get transcript out of future loop
+                    // TODO Get transcript out of future loop
                     break;
                 }
 
