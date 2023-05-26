@@ -414,7 +414,7 @@ impl ClientConnection {
     /// name of the server we want to talk to.
     pub fn new(
         config: Arc<ClientConfig>,
-        backend: Box<dyn Backend>,
+        backend: Box<dyn Backend + Send + Sync + 'static>,
         name: ServerName,
     ) -> Result<Self, Error> {
         Self::new_inner(config, backend, name, Vec::new(), Protocol::Tcp)
@@ -422,7 +422,7 @@ impl ClientConnection {
 
     fn new_inner(
         config: Arc<ClientConfig>,
-        backend: Box<dyn Backend>,
+        backend: Box<dyn Backend + Send + Sync + 'static>,
         name: ServerName,
         extra_exts: Vec<ClientExtension>,
         proto: Protocol,

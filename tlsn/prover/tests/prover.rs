@@ -21,6 +21,7 @@ async fn test_prover_parse_headers() {
     tls_connection
             .write_all(TLSN_TEST_REQUEST).await.unwrap();
 
+    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     tls_connection.close().await.unwrap();
     let prover = join_handle.await.unwrap().unwrap();
 
@@ -42,6 +43,7 @@ async fn test_prover_parse_body() {
     tls_connection
             .write_all(TLSN_TEST_REQUEST).await.unwrap();
 
+    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     tls_connection.close().await.unwrap();
     let prover = join_handle.await.unwrap().unwrap();
 
@@ -68,6 +70,7 @@ async fn test_prover_close_notify() {
     tls_connection
             .write_all(TLSN_TEST_REQUEST).await.unwrap();
 
+    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     tls_connection.close().await.unwrap();
     let prover = join_handle.await.unwrap().unwrap();
 
@@ -118,8 +121,8 @@ fn tlsn_new(address: &str) -> (Prover, TLSConnection) {
     let (prover, tls_connection) = Prover::new(
         ProverConfig::default(),
         address.to_owned(),
-        Box::new(RustCryptoBackend::new()) as Box<dyn Backend + Send>,
-        Box::new(tcp_stream) as Box<dyn ReadWrite + Send>,
+        Box::new(RustCryptoBackend::new()) as Box<dyn Backend + Send + Sync>,
+        Box::new(tcp_stream) as Box<dyn ReadWrite + Send + Sync>,
     )
     .unwrap();
 

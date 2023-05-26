@@ -27,8 +27,8 @@ impl Prover<Initialized> {
         config: ProverConfig,
         url: String,
         // TODO: Not pass into constructor, but method needed to construct this
-        backend: Box<dyn Backend + Send + 'static>,
-        socket: Box<dyn ReadWrite + Send + 'static>,
+        backend: Box<dyn Backend + Send + Sync + 'static>,
+        socket: Box<dyn ReadWrite + Send + Sync + 'static>,
     ) -> Result<(Self, TLSConnection), ProverError> {
         let (request_sender, request_receiver) = channel::mpsc::channel::<Bytes>(10);
         let (response_sender, response_receiver) =
@@ -64,6 +64,7 @@ impl Prover<Initialized> {
 
         let mut tls_client = self.0.tls_client;
         tls_client.start().await.unwrap();
+        println!("Started TLS client");
 
         loop {
             select! {
@@ -71,23 +72,20 @@ impl Prover<Initialized> {
                     let written = sent_data.write(request.as_ref()).unwrap();
               tls_client.write_all_plaintext(&sent_data[sent_data.len() - written..]).await.unwrap();
                 },
-                _ = futures::future::ready(()).fuse() =>  {
-                    if tls_client.wants_write() {
+                _ = tls_client.wants_write_wait().fuse() =>  {
                         match tls_client.write_tls(&mut self.0.socket) {
                             Ok(_) => (),
                             Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => (),
                             Err(err) => panic!("{}", err)
                         }
-                    }
-
-                    if tls_client.wants_read() {
+                },
+                _ = tls_client.wants_read_wait().fuse() =>  {
                         match tls_client.read_tls(&mut self.0.socket) {
                             Ok(_) => (),
                             Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => (),
                             Err(err) => panic!("{}", err)
                         }
                         tls_client.process_new_packets().await.unwrap();
-                    }
                 },
                 _ = futures::future::ready(()).fuse() =>  {
                     // TODO: It is not so easy to get the length of the data that was read

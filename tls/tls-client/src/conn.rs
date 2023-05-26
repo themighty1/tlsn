@@ -579,7 +579,7 @@ pub struct CommonState {
     pub(crate) negotiated_version: Option<ProtocolVersion>,
     pub(crate) side: Side,
     pub(crate) record_layer: record_layer::RecordLayer,
-    pub(crate) backend: Box<dyn Backend>,
+    pub(crate) backend: Box<dyn Backend + Send + Sync + 'static>,
     pub(crate) suite: Option<SupportedCipherSuite>,
     pub(crate) alpn_protocol: Option<Vec<u8>>,
     aligned_handshake: bool,
@@ -607,7 +607,7 @@ impl CommonState {
     pub(crate) fn new(
         max_fragment_size: Option<usize>,
         side: Side,
-        backend: Box<dyn Backend>,
+        backend: Box<dyn Backend + Send + Sync + 'static>,
     ) -> Result<Self, Error> {
         Ok(Self {
             negotiated_version: None,

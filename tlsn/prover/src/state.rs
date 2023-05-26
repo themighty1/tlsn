@@ -13,7 +13,7 @@ pub struct Initialized {
     pub(crate) response_sender: Sender<Result<Bytes, IOError>>,
     pub(crate) close_tls_receiver: OneshotReceiver<()>,
     pub(crate) tls_client: ClientConnection,
-    pub(crate) socket: Box<dyn ReadWrite + Send + 'static>,
+    pub(crate) socket: Box<dyn ReadWrite + Send + Sync + 'static>,
 }
 
 #[derive(Debug)]
