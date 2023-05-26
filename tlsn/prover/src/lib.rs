@@ -64,7 +64,6 @@ impl Prover<Initialized> {
 
         let mut tls_client = self.0.tls_client;
         tls_client.start().await.unwrap();
-        println!("Started TLS client");
 
         loop {
             select! {
@@ -87,7 +86,7 @@ impl Prover<Initialized> {
                         }
                         tls_client.process_new_packets().await.unwrap();
                 },
-                _ = futures::future::ready(()).fuse() =>  {
+                _ = tls_client.has_been_written_plaintext().fuse() =>  {
                     // TODO: It is not so easy to get the length of the data that was read
                     // so we do it by checking the length before and afterwards
                     let received_data_len_before_read = received_data.len();

@@ -1093,6 +1093,11 @@ impl CommonState {
         send_data_and_sendable_tls.await;
     }
 
+    /// Check async if there might be plaintext available
+    pub async fn has_been_written_plaintext(&self) {
+        self.received_plaintext.has_been_written().await
+    }
+
     fn current_io_state(&self) -> IoState {
         IoState {
             tls_bytes_to_write: self.sendable_tls.len(),
