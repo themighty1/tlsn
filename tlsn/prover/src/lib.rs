@@ -68,25 +68,32 @@ impl Prover<Initialized> {
         loop {
             select! {
                 request = request_receiver.select_next_some() => {
+                    println!("Got request");
                     let written = sent_data.write(request.as_ref()).unwrap();
               tls_client.write_all_plaintext(&sent_data[sent_data.len() - written..]).await.unwrap();
+                    println!("Got request comp");
                 },
                 _ = tls_client.wants_write_wait().fuse() =>  {
+                    println!("Wants write");
                         match tls_client.write_tls(&mut self.0.socket) {
                             Ok(_) => (),
                             Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => (),
                             Err(err) => panic!("{}", err)
                         }
+                    println!("Wants write comp");
                 },
                 _ = tls_client.wants_read_wait().fuse() =>  {
+                    println!("Wants read");
                         match tls_client.read_tls(&mut self.0.socket) {
                             Ok(_) => (),
                             Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => (),
                             Err(err) => panic!("{}", err)
                         }
                         tls_client.process_new_packets().await.unwrap();
+                    println!("Wants read comp");
                 },
-                _ = tls_client.has_been_written_plaintext().fuse() =>  {
+                _ = tls_client.wants_read_plain().fuse() =>  {
+                    println!("Has been written plaintext");
                     // TODO: It is not so easy to get the length of the data that was read
                     // so we do it by checking the length before and afterwards
                     let received_data_len_before_read = received_data.len();
@@ -102,6 +109,7 @@ impl Prover<Initialized> {
                         let response = received_data.split_at(received_data_len_before_read).1.to_vec();
                         response_sender.send(Ok(response.into())).await.unwrap();
                     }
+                    println!("Has been written plaintext comp");
                 }
                 _ = &mut self.0.close_tls_receiver => {
                     // TODO: This is some internal wrong handling of close_notify in `tls_client/src/backend/standard.rs` line 436

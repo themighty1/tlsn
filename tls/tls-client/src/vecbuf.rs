@@ -54,6 +54,14 @@ impl ChunkVecBuffer {
         self.read_notify.notified().await;
     }
 
+    pub(crate) fn notify_read(&self) {
+        self.read_notify.notify_one();
+    }
+
+    pub(crate) fn notify_write(&self) {
+        self.write_notify.notify_one();
+    }
+
     /// For a proposed append of `len` bytes, how many
     /// bytes should we actually append to adhere to the
     /// currently set `limit`?

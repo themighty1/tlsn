@@ -21,10 +21,6 @@ async fn test_prover_parse_headers() {
     tls_connection
             .write_all(TLSN_TEST_REQUEST).await.unwrap();
 
-    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-    tls_connection.close().await.unwrap();
-    let prover = join_handle.await.unwrap().unwrap();
-
     let (response_headers, _) = tokio::spawn(parse_response_headers(tls_connection))
         .await
         .unwrap();

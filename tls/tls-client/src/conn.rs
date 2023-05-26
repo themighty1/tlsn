@@ -595,7 +595,7 @@ pub struct CommonState {
     received_middlebox_ccs: u8,
     pub(crate) peer_certificates: Option<Vec<tls_core::key::Certificate>>,
     message_fragmenter: MessageFragmenter,
-    received_plaintext: ChunkVecBuffer,
+    pub(crate) received_plaintext: ChunkVecBuffer,
     sendable_plaintext: ChunkVecBuffer,
     pub(crate) sendable_tls: ChunkVecBuffer,
     #[allow(dead_code)]
@@ -1081,10 +1081,12 @@ impl CommonState {
 
     /// Async version of [`CommonState::wants_read`].
     pub async fn wants_read_wait(&self) {
+        println!("inside wants_read_wait");
         if self.has_received_close_notify {
             pending!()
         }
         self.received_plaintext.has_been_read().await;
+        println!("inside wants_read_wait2");
 
         let may_send_app_data = pin!(self.may_send_application_data_wait.notified());
         let sendable_tls = pin!(self.sendable_tls.has_been_read());
@@ -1094,8 +1096,10 @@ impl CommonState {
     }
 
     /// Check async if there might be plaintext available
-    pub async fn has_been_written_plaintext(&self) {
-        self.received_plaintext.has_been_written().await
+    pub async fn wants_read_plain(&self) {
+        println!("inside wants_read_plain");
+        self.received_plaintext.has_been_written().await;
+        println!("completed wants_read_plain");
     }
 
     fn current_io_state(&self) -> IoState {
