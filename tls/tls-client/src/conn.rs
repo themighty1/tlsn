@@ -14,6 +14,7 @@ use std::{
     convert::TryFrom,
     io, mem,
     ops::{Deref, DerefMut},
+    pin::pin,
 };
 use tls_core::{
     msgs::{
@@ -583,6 +584,8 @@ pub struct CommonState {
     pub(crate) alpn_protocol: Option<Vec<u8>>,
     aligned_handshake: bool,
     pub(crate) may_send_application_data: bool,
+    /// Async version of `may_send_application_data`
+    pub(crate) may_send_application_data_wait: Notify,
     pub(crate) may_receive_application_data: bool,
     pub(crate) early_traffic: bool,
     sent_fatal_alert: bool,
@@ -615,6 +618,7 @@ impl CommonState {
             alpn_protocol: None,
             aligned_handshake: true,
             may_send_application_data: false,
+            may_send_application_data_wait: Notify::new(),
             may_receive_application_data: false,
             early_traffic: false,
             sent_fatal_alert: false,
@@ -639,7 +643,7 @@ impl CommonState {
     }
 
     /// Async version of [`CommonState::wants_write`]
-    pub async fn wants_write_async(&self) {
+    pub async fn wants_write_wait(&self) {
         self.sendable_tls.has_been_written().await;
     }
 
@@ -900,6 +904,7 @@ impl CommonState {
 
     pub(crate) async fn start_outgoing_traffic(&mut self) -> Result<(), Error> {
         self.may_send_application_data = true;
+        self.may_send_application_data_wait.notify_one();
         self.flush_plaintext().await
     }
 
@@ -1075,11 +1080,17 @@ impl CommonState {
     }
 
     /// Async version of [`CommonState::wants_read`].
-    pub async fn wants_read_async(&self) -> bool {
+    pub async fn wants_read_wait(&self) {
         if self.has_received_close_notify {
             pending!()
         }
         self.received_plaintext.has_been_read().await;
+
+        let may_send_app_data = pin!(self.may_send_application_data_wait.notified());
+        let sendable_tls = pin!(self.sendable_tls.has_been_read());
+        let send_data_and_sendable_tls =
+            pin!(futures::future::select(may_send_app_data, sendable_tls));
+        send_data_and_sendable_tls.await;
     }
 
     fn current_io_state(&self) -> IoState {
