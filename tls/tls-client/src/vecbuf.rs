@@ -7,6 +7,8 @@ use std::{cmp, collections::VecDeque, io, io::Read};
 pub(crate) struct ChunkVecBuffer {
     chunks: VecDeque<Vec<u8>>,
     limit: Option<usize>,
+    read_notify: tokio::sync::Notify,
+    write_notify: tokio::sync::Notify,
 }
 
 impl ChunkVecBuffer {
@@ -14,6 +16,8 @@ impl ChunkVecBuffer {
         Self {
             chunks: VecDeque::new(),
             limit,
+            read_notify: tokio::sync::Notify::new(),
+            write_notify: tokio::sync::Notify::new(),
         }
     }
 
@@ -59,6 +63,9 @@ impl ChunkVecBuffer {
     pub(crate) fn append_limited_copy(&mut self, bytes: &[u8]) -> usize {
         let take = self.apply_limit(bytes.len());
         self.append(bytes[..take].to_vec());
+        if !bytes.is_empty() {
+            self.write_notify.notify_one();
+        }
         take
     }
 
@@ -68,6 +75,7 @@ impl ChunkVecBuffer {
 
         if !bytes.is_empty() {
             self.chunks.push_back(bytes);
+            self.write_notify.notify_one();
         }
 
         len
@@ -76,7 +84,11 @@ impl ChunkVecBuffer {
     /// Take one of the chunks from this object.  This
     /// function panics if the object `is_empty`.
     pub(crate) fn pop(&mut self) -> Option<Vec<u8>> {
-        self.chunks.pop_front()
+        let chunk = self.chunks.pop_front();
+        if chunk.is_some() {
+            self.read_notify.notify_one();
+        }
+        chunk
     }
 
     /// Read data out of this object, writing it into `buf`
@@ -90,6 +102,9 @@ impl ChunkVecBuffer {
             self.consume(used);
             offs += used;
         }
+        if offs > 0 {
+            self.read_notify.notify_one();
+        }
 
         Ok(offs)
     }
@@ -97,6 +112,9 @@ impl ChunkVecBuffer {
     #[cfg(read_buf)]
     /// Read data out of this object, writing it into `buf`.
     pub(crate) fn read_buf(&mut self, buf: &mut io::ReadBuf<'_>) -> io::Result<()> {
+        if !self.is_empty() && buf.remaining() > 0 {
+            self.read_notify.notify_one();
+        }
         while !self.is_empty() && buf.remaining() > 0 {
             let chunk = self.chunks[0].as_slice();
             let used = std::cmp::min(chunk.len(), buf.remaining());
@@ -131,6 +149,9 @@ impl ChunkVecBuffer {
         let len = cmp::min(bufs.len(), self.chunks.len());
         let used = wr.write_vectored(&bufs[..len])?;
         self.consume(used);
+        if used > 0 {
+            self.write_notify.notify_one();
+        }
         Ok(used)
     }
 }
