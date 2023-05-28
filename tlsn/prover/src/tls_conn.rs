@@ -5,7 +5,7 @@ use futures::{
         oneshot::Sender as OneshotSender,
     },
     sink::SinkMapErr,
-    AsyncRead, AsyncWrite, SinkExt,
+    AsyncRead, AsyncReadExt, AsyncWrite, SinkExt,
 };
 use std::{
     pin::Pin,
@@ -42,6 +42,18 @@ impl TLSConnection {
             close_tls_sender: Some(close_tls_sender),
         }
     }
+
+    pub async fn close_tls(&mut self, left_over: &mut Vec<u8>) -> Result<(), std::io::Error> {
+        let close_tls_sender = self.close_tls_sender.take().ok_or(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            "TLSConnection already closed",
+        ))?;
+        let out = close_tls_sender.send(()).map_err(|_| {
+            std::io::Error::new(std::io::ErrorKind::Other, "Unable to close TLSConnection")
+        });
+        self.stream_reader.read_to_end(left_over).await?;
+        out
+    }
 }
 
 impl AsyncRead for TLSConnection {
@@ -74,13 +86,6 @@ impl AsyncWrite for TLSConnection {
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
     ) -> Poll<Result<(), std::io::Error>> {
-        let close_tls_sender = self.close_tls_sender.take().ok_or(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            "TLSConnection already closed",
-        ))?;
-        close_tls_sender.send(()).map_err(|_| {
-            std::io::Error::new(std::io::ErrorKind::Other, "Unable to close TLSConnection")
-        })?;
         Pin::new(&mut self.sink_writer).poll_close(cx)
     }
 }

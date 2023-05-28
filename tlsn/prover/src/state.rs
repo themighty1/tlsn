@@ -2,7 +2,7 @@ use crate::ReadWrite;
 use bytes::Bytes;
 use futures::channel::{
     mpsc::{Receiver, Sender},
-    oneshot::Receiver as OneshotReceiver,
+    oneshot::{Receiver as OneshotReceiver, Sender as OneshotSender},
 };
 use std::io::Error as IOError;
 use tls_client::ClientConnection;
@@ -14,6 +14,7 @@ pub struct Initialized {
     pub(crate) close_tls_receiver: OneshotReceiver<()>,
     pub(crate) tls_client: ClientConnection,
     pub(crate) socket: Box<dyn ReadWrite + Send + 'static>,
+    pub(crate) transcript_channel: (OneshotSender<TranscriptSet>, OneshotReceiver<TranscriptSet>),
 }
 
 #[derive(Debug)]
