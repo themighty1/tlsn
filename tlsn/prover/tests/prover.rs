@@ -16,17 +16,15 @@ async fn test_prover_parse_headers() {
     _ = Handle::current().enter();
 
     let (prover, mut tls_connection) = tlsn_new("tlsnotary.org");
-    let join_handle = tokio::spawn(prover.run());
+    _ = tokio::spawn(prover.run());
 
     tls_connection
             .write_all(TLSN_TEST_REQUEST).await.unwrap();
 
-    tls_connection.close().await.unwrap();
-    let prover = join_handle.await.unwrap().unwrap();
-
     let (response_headers, _) = tokio::spawn(parse_response_headers(tls_connection))
         .await
         .unwrap();
+
     let parsed_headers = String::from_utf8(response_headers).unwrap();
 
     assert!(parsed_headers.contains("HTTP/1.1 200 OK\r\n"));
@@ -37,21 +35,19 @@ async fn test_prover_parse_body() {
     _ = Handle::current().enter();
 
     let (prover, mut tls_connection) = tlsn_new("tlsnotary.org");
-    let join_handle = tokio::spawn(prover.run());
+    _ = tokio::spawn(prover.run());
 
     tls_connection
             .write_all(TLSN_TEST_REQUEST).await.unwrap();
 
-    tls_connection.close().await.unwrap();
-    let prover = join_handle.await.unwrap().unwrap();
 
     let (response_headers, tls_connection) = tokio::spawn(parse_response_headers(tls_connection))
         .await
         .unwrap();
-    let parsed_headers = String::from_utf8(response_headers).unwrap();
-    let (_, parsed_body) = tokio::spawn(parse_response_body_and_adapt_headers(tls_connection, parsed_headers))
-        .await
-        .unwrap();
+    let (_, response_body, _) = tokio::spawn(parse_response_body_and_adapt_headers(tls_connection, response_headers)).await.unwrap();
+
+    let parsed_body = String::from_utf8(response_body).unwrap();
+   
 
     assert!(parsed_body.contains("<!DOCTYPE html>"));
     assert!(parsed_body.contains("TLSNotary is a public good"));
@@ -68,13 +64,9 @@ async fn test_prover_close_notify() {
     tls_connection
             .write_all(TLSN_TEST_REQUEST).await.unwrap();
 
-    tls_connection.close().await.unwrap();
-    let prover = join_handle.await.unwrap().unwrap();
-
-    let (_response_headers, mut tls_connection) = tokio::spawn(parse_response_headers(tls_connection))
-        .await
-        .unwrap();
-
+    let mut void = vec![];
+    tls_connection.close_tls(&mut void).await.unwrap();
+    _ = join_handle.await.unwrap().unwrap();
 
     // This should fail, since we closed the tls connection
     let expected_error = tls_connection
@@ -83,33 +75,33 @@ async fn test_prover_close_notify() {
     assert!(matches!(expected_error, Err(std::io::Error { .. })));
 }
 
-//#[tokio::test]
-//async fn test_prover_transcript() {
-//    _ = Handle::current().enter();
-//
-//    let (prover, mut tls_connection) = tlsn_new("tlsnotary.org");
-//    let join_handle = tokio::spawn(prover.run());
-//
-//    tls_connection
-//            .write_all(TLSN_TEST_REQUEST).await.unwrap();
-//
-//    tls_connection.close().await.unwrap();
-//    let prover = join_handle.await.unwrap().unwrap();
-//
-//    let (response_headers, tls_connection) = tokio::spawn(parse_response_headers(tls_connection))
-//        .await
-//        .unwrap();
-//    let parsed_headers = String::from_utf8(response_headers).unwrap();
-//    let (parsed_headers, parsed_body) = tokio::spawn(parse_response_body_and_adapt_headers(tls_connection, parsed_headers)).await.unwrap();
-//
-//    let prover = prover.finalize().await.unwrap();
-//
-//    let expected_transcript_sent = prover.transcript().get_by_id("tx").unwrap().data();
-//    let expected_transcript_received = prover.transcript().get_by_id("rx").unwrap().data(); 
-//
-//    assert_eq!(expected_transcript_sent, TLSN_TEST_REQUEST);
-//    assert_eq!(expected_transcript_received, (parsed_headers + parsed_body.as_str()).as_bytes());
-//}
+#[tokio::test]
+async fn test_prover_transcript() {
+    _ = Handle::current().enter();
+
+    let (prover, mut tls_connection) = tlsn_new("tlsnotary.org");
+    let join_handle = tokio::spawn(prover.run());
+
+    tls_connection
+            .write_all(TLSN_TEST_REQUEST).await.unwrap();
+
+    let (response_headers, tls_connection) = tokio::spawn(parse_response_headers(tls_connection))
+        .await
+        .unwrap();
+    let (response_headers, mut response_body, mut tls_connection) = tokio::spawn(parse_response_body_and_adapt_headers(tls_connection, response_headers)).await.unwrap();
+
+    tls_connection.close_tls(&mut response_body).await.unwrap();
+    let prover = join_handle.await.unwrap().unwrap();
+
+    let parsed_headers = String::from_utf8(response_headers).unwrap();
+    let parsed_body = String::from_utf8(response_body).unwrap();
+
+    let expected_transcript_sent = prover.transcript().get_by_id("tx").unwrap().data();
+    let expected_transcript_received = prover.transcript().get_by_id("rx").unwrap().data(); 
+
+    assert_eq!(expected_transcript_sent, TLSN_TEST_REQUEST);
+    assert_eq!(expected_transcript_received, (parsed_headers + parsed_body.as_str()).as_bytes());
+}
 
 fn tlsn_new(address: &str) -> (Prover, TLSConnection) {
     let tcp_stream = std::net::TcpStream::connect(format!("{}:{}", address, "443")).unwrap();
@@ -153,16 +145,18 @@ async fn parse_response_headers(mut tls_connection: TLSConnection) -> (Vec<u8>, 
     (response_headers, tls_connection)
 }
 
-async fn parse_response_body_and_adapt_headers(mut tls_connection: TLSConnection, mut parsed_headers: String) -> (String, String) {
+async fn parse_response_body_and_adapt_headers(mut tls_connection: TLSConnection, mut parsed_headers: Vec<u8>) -> (Vec<u8>, Vec<u8>, TLSConnection) {
     // Extract content length from response headers
-    let content_length_header: &str = "Content-Length: ";
-    let content_length_start =
-        parsed_headers.find(content_length_header).unwrap() + content_length_header.len();
-    let content_length_len = parsed_headers[content_length_start..].find("\r\n").unwrap();
+    let content_length_header: &[u8] = b"Content-Length: ";
+    let content_length_start = parsed_headers
+        .windows(content_length_header.len())
+        .position(|window| window == content_length_header).unwrap() + content_length_header.len();
+    let content_length_len = parsed_headers[content_length_start..].windows(2).position(|window| window == b"\r\n").unwrap();
 
     // Now parse content length to usize
-    let mut content_length = parsed_headers
-        [content_length_start..content_length_start + content_length_len]
+    let mut content_length = std::str::from_utf8(&parsed_headers
+        [content_length_start..content_length_start + content_length_len])
+        .unwrap()
         .parse::<usize>()
         .unwrap();
 
@@ -170,15 +164,16 @@ async fn parse_response_body_and_adapt_headers(mut tls_connection: TLSConnection
     //
     // We need subtract the body part which is already in the parsed headers from content length to
     // get the remaining body length
-    let body_start = parsed_headers.find("\r\n\r\n").unwrap() + 4;
+    let body_start = parsed_headers.windows(4).position(|window| window == b"\r\n\r\n").unwrap() + 4;
     content_length -= parsed_headers.len() - body_start;
 
     let mut response_body: Vec<u8> = vec![0; content_length];
     tls_connection.read_exact(&mut response_body).await.unwrap();
 
     // Convert parsed bytes to utf8 and also add the header part which did include some body parts
-    let parsed_body =
-        parsed_headers.split_off(body_start) + &String::from_utf8(response_body).unwrap();
+    let mut parsed_body = parsed_headers.split_off(body_start);
+    parsed_body.extend_from_slice(&response_body);
 
-    (parsed_headers, parsed_body)
+
+    (parsed_headers, parsed_body, tls_connection)
 }
