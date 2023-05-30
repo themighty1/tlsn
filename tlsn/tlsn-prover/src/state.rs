@@ -1,24 +1,26 @@
 use bytes::Bytes;
 use futures::channel::{
     mpsc::{Receiver, Sender},
-    oneshot::{Receiver as OneshotReceiver, Sender as OneshotSender},
+    oneshot,
 };
 use std::io::Error as IOError;
 use tls_client::ClientConnection;
-use tlsn_core::transcript::TranscriptSet;
+use tlsn_core::Transcript;
 
 pub struct Initialized<S> {
-    pub(crate) request_receiver: Receiver<Bytes>,
-    pub(crate) response_sender: Sender<Result<Bytes, IOError>>,
-    pub(crate) close_tls_receiver: OneshotReceiver<()>,
+    pub(crate) tx_receiver: Receiver<Bytes>,
+    pub(crate) rx_sender: Sender<Result<Bytes, IOError>>,
+    pub(crate) close_tls_receiver: oneshot::Receiver<()>,
     pub(crate) tls_client: ClientConnection,
     pub(crate) server_socket: S,
-    pub(crate) transcript_channel: (OneshotSender<TranscriptSet>, OneshotReceiver<TranscriptSet>),
+    pub(crate) transcript_tx: Transcript,
+    pub(crate) transcript_rx: Transcript,
 }
 
 #[derive(Debug)]
 pub struct Notarizing {
-    pub(crate) transcript: TranscriptSet,
+    pub(crate) transcript_tx: Transcript,
+    pub(crate) transcript_rx: Transcript,
 }
 
 #[derive(Debug)]

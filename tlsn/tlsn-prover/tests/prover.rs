@@ -97,8 +97,8 @@ async fn test_prover_transcript() {
     let parsed_headers = String::from_utf8(response_headers).unwrap();
     let parsed_body = String::from_utf8(response_body).unwrap();
 
-    let expected_transcript_sent = prover.transcript().get_by_id("tx").unwrap().data();
-    let expected_transcript_received = prover.transcript().get_by_id("rx").unwrap().data(); 
+    let expected_transcript_sent = prover.sent_transcript().data();
+    let expected_transcript_received = prover.recv_transcript().data(); 
 
     assert_eq!(expected_transcript_sent, TLSN_TEST_REQUEST);
     assert_eq!(expected_transcript_received, (parsed_headers + parsed_body.as_str()).as_bytes());

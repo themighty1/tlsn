@@ -32,6 +32,11 @@ impl Transcript {
         }
     }
 
+    /// Extends the transcript with the given data
+    pub fn extend(&mut self, data: &[u8]) {
+        self.data.extend(data);
+    }
+
     /// Returns the encoding ID for each byte in the provided range
     pub fn get_ids(&self, range: &Range<u32>) -> Vec<EncodingId> {
         range

@@ -5,7 +5,7 @@ use futures::{
 };
 use std::{io::Read, sync::Arc};
 use tls_client::{client::InvalidDnsNameError, Backend, ClientConnection, ServerName};
-use tlsn_core::transcript::{Transcript, TranscriptSet};
+use tlsn_core::transcript::Transcript;
 
 mod config;
 mod state;
@@ -30,13 +30,11 @@ where
         backend: Box<dyn Backend + Send + 'static>,
         server_socket: S,
     ) -> Result<(Self, TLSConnection), ProverError> {
-        let (request_sender, request_receiver) = channel::mpsc::channel::<Bytes>(10);
-        let (response_sender, response_receiver) =
-            channel::mpsc::channel::<Result<Bytes, std::io::Error>>(10);
+        let (tx_sender, tx_receiver) = channel::mpsc::channel::<Bytes>(10);
+        let (rx_sender, rx_receiver) = channel::mpsc::channel::<Result<Bytes, std::io::Error>>(10);
         let (close_tls_sender, close_tls_receiver) = channel::oneshot::channel::<()>();
-        let (transcript_sender, transcript_receiver) = channel::oneshot::channel::<TranscriptSet>();
 
-        let tls_conn = TLSConnection::new(request_sender, response_receiver, close_tls_sender);
+        let tls_conn = TLSConnection::new(tx_sender, rx_receiver, close_tls_sender);
 
         let server_name = ServerName::try_from(url.as_str())?;
         let client_config = Arc::new(config.client_config);
@@ -44,84 +42,86 @@ where
 
         Ok((
             Self(Initialized {
-                request_receiver,
-                response_sender,
+                tx_receiver,
+                rx_sender,
                 close_tls_receiver,
                 tls_client,
                 server_socket,
-                transcript_channel: (transcript_sender, transcript_receiver),
+                transcript_tx: Transcript::new("tx", vec![]),
+                transcript_rx: Transcript::new("rx", vec![]),
             }),
             tls_conn,
         ))
     }
 
     // Caller needs to run future on executor
-    pub async fn run(mut self) -> Result<Prover<Notarizing>, ProverError> {
-        let mut sent_data: Vec<u8> = Vec::new();
-        let mut received_data: Vec<u8> = Vec::new();
+    pub async fn run(self) -> Result<Prover<Notarizing>, ProverError> {
+        let Initialized {
+            mut tx_receiver,
+            mut rx_sender,
+            mut close_tls_receiver,
+            mut tls_client,
+            mut server_socket,
+            mut transcript_tx,
+            mut transcript_rx,
+        } = self.0;
 
-        let mut request_receiver = self.0.request_receiver;
-        let mut response_sender = self.0.response_sender;
+        tls_client.start().await?;
 
-        let transcript_receiver = self.0.transcript_channel.1;
-
-        let mut tls_client = self.0.tls_client;
-        tls_client.start().await.unwrap();
-
+        let mut rx_buf = [0u8; 512];
         loop {
             select! {
-                request = request_receiver.select_next_some() => {
-                    sent_data.extend_from_slice(&request);
-              tls_client.write_all_plaintext(&sent_data[sent_data.len() - request.len()..]).await.unwrap();
+                data = tx_receiver.select_next_some() => {
+                    transcript_tx.extend(&data);
+                    tls_client
+                        .write_all_plaintext(&data)
+                        .await?;
                 },
-                _ = &mut self.0.close_tls_receiver => {
+                _ = &mut close_tls_receiver => {
                     // TODO: Handle this correctly
-                    _ = tls_client.send_close_notify().await;
-                    match tls_client.complete_io(&mut self.0.server_socket).await {
-                        Ok(_) => (),
-                        Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => (),
-                        Err(err) => panic!("{}", err)
-                    }
-                    let transcript_received = Transcript::new("rx", received_data);
-                    let transcript_sent = Transcript::new("tx", sent_data);
-
-                    let transcript_set = TranscriptSet::new(&[transcript_sent, transcript_received]);
-                    self.0.transcript_channel.0.send(transcript_set).unwrap();
+                    tls_client.send_close_notify().await?;
+                    println!("close tls");
                     break;
                 },
                 default => {
                     if tls_client.is_handshaking() {
-                        tls_client.complete_io(&mut self.0.server_socket).await?;
+                        tls_client.complete_io(&mut server_socket).await?;
                     }
 
                     if tls_client.wants_write() {
-                        tls_client.write_tls_async(&mut self.0.server_socket).await?;
+                        tls_client.write_tls_async(&mut server_socket).await?;
                     }
 
                     while tls_client.wants_read() {
-                        if tls_client.complete_io(&mut self.0.server_socket).await?.0 == 0 {
+                        if tls_client.complete_io(&mut server_socket).await?.0 == 0 {
                             break;
                         }
                     }
 
-                    let mut buf = [0u8; 512];
-                    if let Ok(n) = tls_client.reader().read(&mut buf) {
+                    if let Ok(n) = tls_client.reader().read(&mut rx_buf) {
                         if n > 0 {
-                            received_data.extend_from_slice(&buf[..n]);
-                            response_sender.send(Ok(Bytes::copy_from_slice(&buf[..n]))).await.unwrap();
+                            transcript_rx.extend(&rx_buf[..n]);
+                            rx_sender.send(Ok(Bytes::copy_from_slice(&rx_buf[..n]))).await.unwrap();
                         }
                     }
                 }
             }
         }
-        let transcript = transcript_receiver.await.unwrap();
-        Ok(Prover(Notarizing { transcript }))
+
+        Ok(Prover(Notarizing {
+            transcript_tx,
+            transcript_rx,
+        }))
     }
 }
 
 impl Prover<Notarizing> {
-    pub fn transcript(&self) -> &TranscriptSet {
-        &self.0.transcript
+    pub fn sent_transcript(&self) -> &Transcript {
+        &self.0.transcript_tx
+    }
+
+    pub fn recv_transcript(&self) -> &Transcript {
+        &self.0.transcript_rx
     }
 
     pub fn send_commitments(&mut self) -> Result<(), ProverError> {
