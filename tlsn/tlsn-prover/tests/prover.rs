@@ -67,7 +67,7 @@ async fn test_prover_close_notify() {
 
     let mut void = vec![];
     tls_connection.close_tls(&mut void).await.unwrap();
-    _ = join_handle.await.unwrap().unwrap();
+    _ = join_handle.await.unwrap().unwrap_err();
 
     // This should fail, since we closed the tls connection
     let expected_error = tls_connection
