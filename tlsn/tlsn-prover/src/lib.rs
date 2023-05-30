@@ -3,10 +3,7 @@ use futures::{
     channel::{self, oneshot::Canceled},
     select, AsyncRead, AsyncWrite, SinkExt, StreamExt,
 };
-use std::{
-    io::{Read, Write},
-    sync::Arc,
-};
+use std::{io::Read, sync::Arc};
 use tls_client::{client::InvalidDnsNameError, Backend, ClientConnection, ServerName};
 use tlsn_core::transcript::{Transcript, TranscriptSet};
 
@@ -17,7 +14,7 @@ mod tls_conn;
 pub use config::ProverConfig;
 pub use tls_conn::TLSConnection;
 
-use state::{Initialized, Notarizing, ProverState};
+pub use state::{Initialized, Notarizing, ProverState};
 
 #[derive(Debug)]
 pub struct Prover<T: ProverState>(T);
@@ -51,7 +48,7 @@ where
                 response_sender,
                 close_tls_receiver,
                 tls_client,
-                socket,
+                server_socket,
                 transcript_channel: (transcript_sender, transcript_receiver),
             }),
             tls_conn,
@@ -74,13 +71,13 @@ where
         loop {
             select! {
                 request = request_receiver.select_next_some() => {
-                    let written = sent_data.write(request.as_ref()).unwrap();
-              tls_client.write_all_plaintext(&sent_data[sent_data.len() - written..]).await.unwrap();
+                    sent_data.extend_from_slice(&request);
+              tls_client.write_all_plaintext(&sent_data[sent_data.len() - request.len()..]).await.unwrap();
                 },
                 _ = &mut self.0.close_tls_receiver => {
                     // TODO: Handle this correctly
                     _ = tls_client.send_close_notify().await;
-                    match tls_client.complete_io(&mut self.0.socket).await {
+                    match tls_client.complete_io(&mut self.0.server_socket).await {
                         Ok(_) => (),
                         Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => (),
                         Err(err) => panic!("{}", err)
@@ -93,31 +90,27 @@ where
                     break;
                 },
                 default => {
+                    if tls_client.is_handshaking() {
+                        tls_client.complete_io(&mut self.0.server_socket).await?;
+                    }
+
                     if tls_client.wants_write() {
-                        match tls_client.write_tls(&mut self.0.socket) {
-                            Ok(_) => (),
-                            Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => (),
-                            Err(err) => panic!("{}", err)
+                        tls_client.write_tls_async(&mut self.0.server_socket).await?;
+                    }
+
+                    while tls_client.wants_read() {
+                        if tls_client.complete_io(&mut self.0.server_socket).await?.0 == 0 {
+                            break;
                         }
                     }
 
-                    if tls_client.wants_read() {
-                        match tls_client.read_tls(&mut self.0.socket) {
-                            Ok(_) => (),
-                            Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => (),
-                            Err(err) => panic!("{}", err)
+                    let mut buf = [0u8; 512];
+                    if let Ok(n) = tls_client.reader().read(&mut buf) {
+                        if n > 0 {
+                            received_data.extend_from_slice(&buf[..n]);
+                            response_sender.send(Ok(Bytes::copy_from_slice(&buf[..n]))).await.unwrap();
                         }
-                        tls_client.process_new_packets().await.unwrap();
                     }
-
-                    let received_data_len_before_read = received_data.len();
-                    match tls_client.reader().read_to_end(&mut received_data) {
-                            Ok(_) => (),
-                            Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => (),
-                            Err(err) => panic!("{}", err)
-                        }
-                    let response = received_data.split_at(received_data_len_before_read).1.to_vec();
-                        response_sender.send(Ok(response.into())).await.unwrap();
                 }
             }
         }
@@ -135,9 +128,6 @@ impl Prover<Notarizing> {
         todo!()
     }
 }
-
-pub trait ReadWrite: Read + Write + Send + Unpin + 'static {}
-impl<T: Read + Write + Send + Unpin + 'static> ReadWrite for T {}
 
 #[derive(Debug, thiserror::Error)]
 pub enum ProverError {

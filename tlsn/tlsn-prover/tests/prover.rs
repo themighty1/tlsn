@@ -1,7 +1,8 @@
 use futures::{AsyncReadExt, AsyncWriteExt};
-use prover::{Prover, ProverConfig, ReadWrite, TLSConnection};
+use tlsn_prover::{Prover, ProverConfig,  TLSConnection, Initialized};
 use tls_client::{Backend, RustCryptoBackend};
 use tokio::runtime::Handle;
+use tokio_util::compat::{TokioAsyncReadCompatExt, Compat};
 
 const TLSN_TEST_REQUEST: &[u8] = 
                     b"GET / HTTP/1.1\r\n\
@@ -15,7 +16,7 @@ const TLSN_TEST_REQUEST: &[u8] =
 async fn test_prover_parse_headers() {
     _ = Handle::current().enter();
 
-    let (prover, mut tls_connection) = tlsn_new("tlsnotary.org");
+    let (prover, mut tls_connection) = tlsn_new("tlsnotary.org").await;
     _ = tokio::spawn(prover.run());
 
     tls_connection
@@ -34,7 +35,7 @@ async fn test_prover_parse_headers() {
 async fn test_prover_parse_body() {
     _ = Handle::current().enter();
 
-    let (prover, mut tls_connection) = tlsn_new("tlsnotary.org");
+    let (prover, mut tls_connection) = tlsn_new("tlsnotary.org").await;
     _ = tokio::spawn(prover.run());
 
     tls_connection
@@ -58,7 +59,7 @@ async fn test_prover_parse_body() {
 async fn test_prover_close_notify() {
     _ = Handle::current().enter();
 
-    let (prover, mut tls_connection) = tlsn_new("tlsnotary.org");
+    let (prover, mut tls_connection) = tlsn_new("tlsnotary.org").await;
     let join_handle = tokio::spawn(prover.run());
 
     tls_connection
@@ -79,7 +80,7 @@ async fn test_prover_close_notify() {
 async fn test_prover_transcript() {
     _ = Handle::current().enter();
 
-    let (prover, mut tls_connection) = tlsn_new("tlsnotary.org");
+    let (prover, mut tls_connection) = tlsn_new("tlsnotary.org").await;
     let join_handle = tokio::spawn(prover.run());
 
     tls_connection
@@ -103,15 +104,14 @@ async fn test_prover_transcript() {
     assert_eq!(expected_transcript_received, (parsed_headers + parsed_body.as_str()).as_bytes());
 }
 
-fn tlsn_new(address: &str) -> (Prover, TLSConnection) {
-    let tcp_stream = std::net::TcpStream::connect(format!("{}:{}", address, "443")).unwrap();
-    tcp_stream.set_nonblocking(true).unwrap();
+async fn tlsn_new(address: &str) -> (Prover<Initialized<Compat<tokio::net::TcpStream>>>, TLSConnection) {
+    let tcp_stream = tokio::net::TcpStream::connect(format!("{}:{}", address, "443")).await.unwrap();
 
     let (prover, tls_connection) = Prover::new(
         ProverConfig::default(),
         address.to_owned(),
         Box::new(RustCryptoBackend::new()) as Box<dyn Backend + Send>,
-        Box::new(tcp_stream) as Box<dyn ReadWrite + Send>,
+        tcp_stream.compat(),
     )
     .unwrap();
 

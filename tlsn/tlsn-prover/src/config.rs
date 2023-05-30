@@ -1,7 +1,7 @@
 use actor_ot::{OTActorReceiverConfig, OTActorSenderConfig};
 use mpc_share_conversion::{ReceiverConfig, SenderConfig};
 use tls_client::{ClientConfig, OwnedTrustAnchor, RootCertStore};
-use tls_mpc::{MpcTlsCommonConfig, MpcTlsLeaderConfig};
+use tlsn_tls_mpc::{MpcTlsCommonConfig, MpcTlsLeaderConfig};
 
 pub struct ProverConfig {
     pub client_config: ClientConfig,

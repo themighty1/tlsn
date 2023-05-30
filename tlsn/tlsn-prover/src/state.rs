@@ -1,4 +1,3 @@
-use crate::ReadWrite;
 use bytes::Bytes;
 use futures::channel::{
     mpsc::{Receiver, Sender},
@@ -13,7 +12,7 @@ pub struct Initialized<S> {
     pub(crate) response_sender: Sender<Result<Bytes, IOError>>,
     pub(crate) close_tls_receiver: OneshotReceiver<()>,
     pub(crate) tls_client: ClientConnection,
-    pub(crate) socket: S,
+    pub(crate) server_socket: S,
     pub(crate) transcript_channel: (OneshotSender<TranscriptSet>, OneshotReceiver<TranscriptSet>),
 }
 
@@ -27,13 +26,13 @@ pub struct Finalized {}
 
 pub trait ProverState: sealed::Sealed {}
 
-impl ProverState for Initialized {}
+impl<S> ProverState for Initialized<S> {}
 impl ProverState for Notarizing {}
 impl ProverState for Finalized {}
 
 mod sealed {
     pub trait Sealed {}
-    impl Sealed for super::Initialized {}
+    impl<S> Sealed for super::Initialized<S> {}
     impl Sealed for super::Notarizing {}
     impl Sealed for super::Finalized {}
 }
