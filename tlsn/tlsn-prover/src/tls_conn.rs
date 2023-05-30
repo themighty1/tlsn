@@ -43,16 +43,14 @@ impl TLSConnection {
         }
     }
 
-    pub async fn close_tls(&mut self, left_over: &mut Vec<u8>) -> Result<(), std::io::Error> {
+    pub async fn close_tls(&mut self) -> Result<(), std::io::Error> {
         let close_tls_sender = self.close_tls_sender.take().ok_or(std::io::Error::new(
             std::io::ErrorKind::Other,
             "TLSConnection already closed",
         ))?;
-        let out = close_tls_sender.send(()).map_err(|_| {
+        close_tls_sender.send(()).map_err(|_| {
             std::io::Error::new(std::io::ErrorKind::Other, "Unable to close TLSConnection")
-        });
-        self.stream_reader.read_to_end(left_over).await?;
-        out
+        })
     }
 }
 

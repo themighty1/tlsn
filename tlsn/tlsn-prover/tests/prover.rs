@@ -65,8 +65,7 @@ async fn test_prover_close_notify() {
     tls_connection
             .write_all(TLSN_TEST_REQUEST).await.unwrap();
 
-    let mut void = vec![];
-    tls_connection.close_tls(&mut void).await.unwrap();
+    tls_connection.close_tls().await.unwrap();
     let close_notify = join_handle.await.unwrap().unwrap_err();
 
     // This should fail, since we closed the tls connection
@@ -88,12 +87,15 @@ async fn test_prover_transcript() {
     tls_connection
             .write_all(TLSN_TEST_REQUEST).await.unwrap();
 
+
     let (response_headers, tls_connection) = tokio::spawn(parse_response_headers(tls_connection))
         .await
         .unwrap();
-    let (response_headers, mut response_body, mut tls_connection) = tokio::spawn(parse_response_body_and_adapt_headers(tls_connection, response_headers)).await.unwrap();
+    let (response_headers, mut response_body, mut tls_connection) =
+        tokio::spawn(parse_response_body_and_adapt_headers(tls_connection,
+                                                           response_headers)).await.unwrap();
 
-    tls_connection.close_tls(&mut response_body).await.unwrap();
+    tls_connection.close_tls().await.unwrap();
     let prover = join_handle.await.unwrap().unwrap();
 
     let parsed_headers = String::from_utf8(response_headers).unwrap();
