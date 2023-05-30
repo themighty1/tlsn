@@ -83,11 +83,7 @@ where
                     // Drain any remaining data from the connection
                     loop {
                         match tls_client.complete_io(&mut server_socket).await {
-                            Ok((read, _)) => {
-                                if read == 0 {
-                                    break;
-                                }
-                            },
+                            Ok(_) => {},
                             // Not all servers correctly close the connection with a close_notify,
                             // if this happens we must abort because we can't reveal the MAC key
                             // to the Notary.
@@ -101,6 +97,9 @@ where
                             if n > 0 {
                                 transcript_rx.extend(&rx_buf[..n]);
                                 rx_sender.send(Ok(Bytes::copy_from_slice(&rx_buf[..n]))).await.unwrap();
+                            } else {
+                                // Drain until EOF, ie Ok(0)
+                                break;
                             }
                         }
                     }
