@@ -78,9 +78,33 @@ where
                         .await?;
                 },
                 _ = &mut close_tls_receiver => {
-                    // TODO: Handle this correctly
                     tls_client.send_close_notify().await?;
-                    println!("close tls");
+
+                    // Drain any remaining data from the connection
+                    loop {
+                        match tls_client.complete_io(&mut server_socket).await {
+                            Ok((read, _)) => {
+                                if read == 0 {
+                                    break;
+                                }
+                            },
+                            // Not all servers correctly close the connection with a close_notify,
+                            // if this happens we must abort because we can't reveal the MAC key
+                            // to the Notary.
+                            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+                                return Err(ProverError::ServerNoCloseNotify)
+                            },
+                            Err(e) => return Err(e)?,
+                        }
+
+                        if let Ok(n) = tls_client.reader().read(&mut rx_buf) {
+                            if n > 0 {
+                                transcript_rx.extend(&rx_buf[..n]);
+                                rx_sender.send(Ok(Bytes::copy_from_slice(&rx_buf[..n]))).await.unwrap();
+                            }
+                        }
+                    }
+
                     break;
                 },
                 default => {
@@ -136,11 +160,13 @@ pub enum ProverError {
     #[error(transparent)]
     IOError(#[from] std::io::Error),
     #[error(transparent)]
-    InvalidSeverName(#[from] InvalidDnsNameError),
+    InvalidServerName(#[from] InvalidDnsNameError),
     #[error("Prover is already running")]
     AlreadyRunning,
     #[error("Unable to close TLS connection")]
     CloseTlsConnection,
+    #[error("server did not send a close_notify")]
+    ServerNoCloseNotify,
     #[error("Prover has already been shutdown")]
     AlreadyShutdown,
     #[error("Unable to receive transcripts: {0}")]
