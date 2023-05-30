@@ -1,5 +1,5 @@
 use futures::{AsyncReadExt, AsyncWriteExt};
-use tlsn_prover::{Prover, ProverConfig,  TLSConnection, Initialized};
+use tlsn_prover::{Prover, ProverConfig,  TLSConnection, Initialized, ProverError};
 use tls_client::{Backend, RustCryptoBackend};
 use tokio::runtime::Handle;
 use tokio_util::compat::{TokioAsyncReadCompatExt, Compat};
@@ -67,12 +67,14 @@ async fn test_prover_close_notify() {
 
     let mut void = vec![];
     tls_connection.close_tls(&mut void).await.unwrap();
-    _ = join_handle.await.unwrap().unwrap_err();
+    let close_notify = join_handle.await.unwrap().unwrap_err();
 
     // This should fail, since we closed the tls connection
     let expected_error = tls_connection
             .write_all(TLSN_TEST_REQUEST).await;
 
+
+    assert!(matches!(close_notify, ProverError::ServerNoCloseNotify));
     assert!(matches!(expected_error, Err(std::io::Error { .. })));
 }
 
