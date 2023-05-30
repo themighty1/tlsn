@@ -357,9 +357,7 @@ pub use crate::{
     key_log_file::KeyLogFile,
     kx::{SupportedKxGroup, ALL_KX_GROUPS},
 };
-pub use backend::{
-    Backend, BackendError, DecryptMode, EncryptMode, RustCryptoBackend, TLSNBackend,
-};
+pub use backend::{Backend, BackendError, DecryptMode, EncryptMode, RustCryptoBackend};
 pub use cipher::{MessageDecrypter, MessageEncrypter};
 pub use tls_core::{
     key::{Certificate, PrivateKey},

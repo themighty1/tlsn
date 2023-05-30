@@ -8,12 +8,12 @@ use std::io::Error as IOError;
 use tls_client::ClientConnection;
 use tlsn_core::transcript::TranscriptSet;
 
-pub struct Initialized {
+pub struct Initialized<S> {
     pub(crate) request_receiver: Receiver<Bytes>,
     pub(crate) response_sender: Sender<Result<Bytes, IOError>>,
     pub(crate) close_tls_receiver: OneshotReceiver<()>,
     pub(crate) tls_client: ClientConnection,
-    pub(crate) socket: Box<dyn ReadWrite + Send + 'static>,
+    pub(crate) socket: S,
     pub(crate) transcript_channel: (OneshotSender<TranscriptSet>, OneshotReceiver<TranscriptSet>),
 }
 

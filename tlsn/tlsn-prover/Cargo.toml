@@ -1,16 +1,14 @@
 [package]
-name = "prover"
+name = "tlsn-prover"
 version = "0.1.0"
 edition = "2021"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
 tlsn-tls-client.workspace = true
 tlsn-utils-aio.workspace = true
 tlsn-mpc-share-conversion.workspace = true
 tlsn-core.workspace = true
-tls-mpc.workspace = true
+tlsn-tls-mpc.workspace = true
 actor-ot.workspace = true
 
 futures.workspace = true
@@ -21,4 +19,9 @@ tokio-util = { workspace = true, features = ["io", "compat"] }
 bytes.workspace = true
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "time"] }
+tokio = { workspace = true, features = [
+    "macros",
+    "rt",
+    "rt-multi-thread",
+    "time",
+] }

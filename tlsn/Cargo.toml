@@ -1,9 +1,9 @@
 [workspace]
-members = ["tlsn-core", "tlsn-notary", "prover"]
+members = ["tlsn-core", "tlsn-notary", "tlsn-prover"]
 
 [workspace.dependencies]
 tlsn-core = { path = "tlsn-core" }
-prover = { path = "prover" }
+tlsn-prover = { path = "tlsn-prover" }
 tlsn-notary = { path = "tlsn-notary" }
 
 tlsn-tls-core = { path = "../tls/tls-core" }

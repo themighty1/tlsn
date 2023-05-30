@@ -1,7 +1,7 @@
 use bytes::Bytes;
 use futures::{
     channel::{self, oneshot::Canceled},
-    select, SinkExt, StreamExt,
+    select, AsyncRead, AsyncWrite, SinkExt, StreamExt,
 };
 use std::{
     io::{Read, Write},
@@ -20,15 +20,18 @@ pub use tls_conn::TLSConnection;
 use state::{Initialized, Notarizing, ProverState};
 
 #[derive(Debug)]
-pub struct Prover<T: ProverState = Initialized>(T);
+pub struct Prover<T: ProverState>(T);
 
-impl Prover<Initialized> {
+impl<S> Prover<Initialized<S>>
+where
+    S: AsyncWrite + AsyncRead + Send + Unpin + 'static,
+{
     pub fn new(
         config: ProverConfig,
         url: String,
         // TODO: Not pass into constructor, but method needed to construct this
         backend: Box<dyn Backend + Send + 'static>,
-        socket: Box<dyn ReadWrite + Send + 'static>,
+        server_socket: S,
     ) -> Result<(Self, TLSConnection), ProverError> {
         let (request_sender, request_receiver) = channel::mpsc::channel::<Bytes>(10);
         let (response_sender, response_receiver) =
