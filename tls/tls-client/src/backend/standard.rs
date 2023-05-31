@@ -424,36 +424,14 @@ impl Backend for RustCryptoBackend {
 
         match enc.cipher_suite {
             CipherSuite::TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
-            | CipherSuite::TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256 => {
-                match msg.version {
-                    ProtocolVersion::TLSv1_2 => {
-                        let explicit_nonce;
-                        match msg.typ {
-                            ContentType::Handshake => {
-                                // In TLS 1.2 the only handshake message that needs to be
-                                // encrypted by the client is Client_Finished.
-
-                                // By fixing the explicit_nonce of Client_Finished, we
-                                // can save a round-trip in GC (no need to run circuit c4.casm
-                                // separately but can integrate it into c3.casm).
-                                explicit_nonce = [0, 0, 0, 0, 0, 0, 0, 1];
-                            }
-                            ContentType::ApplicationData => {
-                                explicit_nonce = thread_rng().gen();
-                            }
-                            _ => {
-                                return Err(BackendError::EncryptionError(
-                                    "Unexpected ContentType".to_string(),
-                                ));
-                            }
-                        };
-                        return enc.encrypt_aes128gcm(&msg, seq, &explicit_nonce);
-                    }
-                    version => {
-                        return Err(BackendError::UnsupportedProtocolVersion(version));
-                    }
+            | CipherSuite::TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256 => match msg.version {
+                ProtocolVersion::TLSv1_2 => {
+                    return enc.encrypt_aes128gcm(&msg, seq, &seq.to_be_bytes());
                 }
-            }
+                version => {
+                    return Err(BackendError::UnsupportedProtocolVersion(version));
+                }
+            },
             suite => {
                 return Err(BackendError::UnsupportedCiphersuite(suite));
             }

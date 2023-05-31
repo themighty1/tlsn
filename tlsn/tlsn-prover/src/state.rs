@@ -11,7 +11,7 @@ pub struct Initialized<S> {
     pub(crate) tx_receiver: Receiver<Bytes>,
     pub(crate) rx_sender: Sender<Result<Bytes, IOError>>,
     pub(crate) close_tls_receiver: oneshot::Receiver<()>,
-    pub(crate) tls_client: ClientConnection,
+    pub(crate) client: ClientConnection,
     pub(crate) server_socket: S,
     pub(crate) transcript_tx: Transcript,
     pub(crate) transcript_rx: Transcript,

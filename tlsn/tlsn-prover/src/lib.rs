@@ -1,7 +1,8 @@
 use bytes::Bytes;
 use futures::{
     channel::{self, oneshot::Canceled},
-    select, AsyncRead, AsyncWrite, SinkExt, StreamExt,
+    select_biased, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, FutureExt, SinkExt,
+    StreamExt,
 };
 use std::{io::Read, sync::Arc};
 use tls_client::{client::InvalidDnsNameError, Backend, ClientConnection, ServerName};
@@ -15,6 +16,9 @@ pub use config::ProverConfig;
 pub use tls_conn::TLSConnection;
 
 pub use state::{Initialized, Notarizing, ProverState};
+
+const RX_TLS_BUF_SIZE: usize = 2 << 13; // 8 KiB
+const RX_BUF_SIZE: usize = 2 << 13; // 8 KiB
 
 #[derive(Debug)]
 pub struct Prover<T: ProverState>(T);
@@ -38,14 +42,14 @@ where
 
         let server_name = ServerName::try_from(url.as_str())?;
         let client_config = Arc::new(config.client_config);
-        let tls_client = ClientConnection::new(client_config, backend, server_name)?;
+        let client = ClientConnection::new(client_config, backend, server_name)?;
 
         Ok((
             Self(Initialized {
                 tx_receiver,
                 rx_sender,
                 close_tls_receiver,
-                tls_client,
+                client,
                 server_socket,
                 transcript_tx: Transcript::new("tx", vec![]),
                 transcript_rx: Transcript::new("rx", vec![]),
@@ -57,79 +61,25 @@ where
     // Caller needs to run future on executor
     pub async fn run(self) -> Result<Prover<Notarizing>, ProverError> {
         let Initialized {
-            mut tx_receiver,
-            mut rx_sender,
-            mut close_tls_receiver,
-            mut tls_client,
-            mut server_socket,
+            tx_receiver,
+            rx_sender,
+            close_tls_receiver,
+            client,
+            server_socket,
             mut transcript_tx,
             mut transcript_rx,
         } = self.0;
 
-        tls_client.start().await?;
-
-        let mut rx_buf = [0u8; 512];
-        loop {
-            select! {
-                data = tx_receiver.select_next_some() => {
-                    transcript_tx.extend(&data);
-                    tls_client
-                        .write_all_plaintext(&data)
-                        .await?;
-                },
-                _ = &mut close_tls_receiver => {
-                    tls_client.send_close_notify().await?;
-
-                    // Drain any remaining data from the connection
-                    loop {
-                        match tls_client.complete_io(&mut server_socket).await {
-                            Ok(_) => {},
-                            // Not all servers correctly close the connection with a close_notify,
-                            // if this happens we must abort because we can't reveal the MAC key
-                            // to the Notary.
-                            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
-                                return Err(ProverError::ServerNoCloseNotify)
-                            },
-                            Err(e) => return Err(e)?,
-                        }
-
-                        if let Ok(n) = tls_client.reader().read(&mut rx_buf) {
-                            if n > 0 {
-                                transcript_rx.extend(&rx_buf[..n]);
-                                rx_sender.send(Ok(Bytes::copy_from_slice(&rx_buf[..n]))).await.unwrap();
-                            } else {
-                                // Drain until EOF, ie Ok(0)
-                                break;
-                            }
-                        }
-                    }
-
-                    break;
-                },
-                default => {
-                    if tls_client.is_handshaking() {
-                        tls_client.complete_io(&mut server_socket).await?;
-                    }
-
-                    if tls_client.wants_write() {
-                        tls_client.write_tls_async(&mut server_socket).await?;
-                    }
-
-                    while tls_client.wants_read() {
-                        if tls_client.complete_io(&mut server_socket).await?.0 == 0 {
-                            break;
-                        }
-                    }
-
-                    if let Ok(n) = tls_client.reader().read(&mut rx_buf) {
-                        if n > 0 {
-                            transcript_rx.extend(&rx_buf[..n]);
-                            rx_sender.send(Ok(Bytes::copy_from_slice(&rx_buf[..n]))).await.unwrap();
-                        }
-                    }
-                }
-            }
-        }
+        run_client(
+            client,
+            server_socket,
+            &mut transcript_tx,
+            &mut transcript_rx,
+            tx_receiver,
+            rx_sender,
+            close_tls_receiver,
+        )
+        .await?;
 
         Ok(Prover(Notarizing {
             transcript_tx,
@@ -170,4 +120,126 @@ pub enum ProverError {
     AlreadyShutdown,
     #[error("Unable to receive transcripts: {0}")]
     TranscriptError(#[from] Canceled),
+}
+
+/// Runs the TLS session to completion, returning the session transcripts.
+async fn run_client<T: AsyncWrite + AsyncRead + Unpin>(
+    mut client: ClientConnection,
+    server_socket: T,
+    transcript_tx: &mut Transcript,
+    transcript_rx: &mut Transcript,
+    mut tx_receiver: channel::mpsc::Receiver<Bytes>,
+    mut rx_sender: channel::mpsc::Sender<Result<Bytes, std::io::Error>>,
+    mut close_tls_receiver: channel::oneshot::Receiver<()>,
+) -> Result<(), ProverError> {
+    client.start().await?;
+
+    let (mut server_rx, mut server_tx) = server_socket.split();
+
+    let mut rx_tls_buf = [0u8; RX_TLS_BUF_SIZE];
+    let mut rx_buf = [0u8; RX_BUF_SIZE];
+
+    let mut client_closed = false;
+    let mut server_closed = false;
+
+    let mut rx_tls_fut = server_rx.read(&mut rx_tls_buf).fuse();
+    loop {
+        select_biased! {
+            read_res = &mut rx_tls_fut => {
+                let received = read_res?;
+
+                // Loop until we've processed all the data we received in this read.
+                let mut processed = 0;
+                while processed < received {
+                    processed += client.read_tls(&mut &rx_tls_buf[processed..received])?;
+                    match client.process_new_packets().await {
+                        Ok(_) => {}
+                        Err(e) => {
+                            // In case we have an alert to send describing this error,
+                            // try a last-gasp write -- but don't predate the primary
+                            // error.
+                            let _ignored = client.write_tls_async(&mut server_tx).await;
+
+                            return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+                        }
+                    }
+                }
+
+                if received == 0 {
+                    server_closed = true;
+                }
+
+                // Reset the read future so next iteration we can read again.
+                rx_tls_fut = server_rx.read(&mut rx_tls_buf).fuse();
+            }
+            data = tx_receiver.select_next_some() => {
+                transcript_tx.extend(&data);
+                client
+                    .write_all_plaintext(&data)
+                    .await?;
+            },
+            _ = &mut close_tls_receiver => {
+                client_closed = true;
+
+                client.send_close_notify().await?;
+
+                // Flush all remaining plaintext
+                while client.wants_write() {
+                    client.write_tls_async(&mut server_tx).await?;
+                }
+                server_tx.flush().await?;
+                server_tx.close().await?;
+            },
+        }
+
+        while client.wants_write() && !client_closed {
+            client.write_tls_async(&mut server_tx).await?;
+        }
+
+        // Flush all remaining plaintext to the server
+        // otherwise this loop could hang forever as the server
+        // waits for more data before responding.
+        server_tx.flush().await?;
+
+        // Forward all plaintext to the TLSConnection
+        loop {
+            let n = match client.reader().read(&mut rx_buf) {
+                Ok(n) => n,
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
+                // Some servers will not send a close_notify, in which case we need to
+                // error because we can't reveal the MAC key to the Notary.
+                Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+                    return Err(ProverError::ServerNoCloseNotify)
+                }
+                Err(e) => return Err(e)?,
+            };
+
+            if n > 0 {
+                transcript_rx.extend(&rx_buf[..n]);
+                rx_sender
+                    .send(Ok(Bytes::copy_from_slice(&rx_buf[..n])))
+                    .await
+                    .unwrap();
+            } else {
+                break;
+            }
+        }
+
+        if client_closed && server_closed {
+            break;
+        }
+    }
+
+    // Extra guard to guarantee that the server sent a close_notify.
+    //
+    // DO NOT REMOVE!
+    //
+    // This is necessary, as our protocol reveals the MAC key to the Notary afterwards
+    // which could be used to authenticate modified TLS records if the Notary is
+    // in the middle of the connection.
+    if !client.received_close_notify() {
+        return Err(ProverError::ServerNoCloseNotify);
+    }
+
+    Ok(())
 }

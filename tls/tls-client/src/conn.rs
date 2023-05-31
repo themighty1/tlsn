@@ -1108,6 +1108,11 @@ impl CommonState {
             && (self.may_send_application_data || self.sendable_tls.is_empty())
     }
 
+    /// Returns true if the peer has sent a close_notify alert.
+    pub fn received_close_notify(&self) -> bool {
+        self.has_received_close_notify
+    }
+
     fn current_io_state(&self) -> IoState {
         IoState {
             tls_bytes_to_write: self.sendable_tls.len(),

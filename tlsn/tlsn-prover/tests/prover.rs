@@ -82,7 +82,8 @@ async fn test_prover_transcript() {
     _ = Handle::current().enter();
 
     let (prover, mut tls_connection) = tlsn_new("tlsnotary.org").await;
-    let join_handle = tokio::spawn(prover.run());
+    let join_handle = tokio::spawn(async {
+        let res = prover.run().await; println!("run err: {:?}", &res.is_err()); res});
 
     tls_connection
             .write_all(TLSN_TEST_REQUEST).await.unwrap();

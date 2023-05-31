@@ -5,7 +5,7 @@ use futures::{
         oneshot::Sender as OneshotSender,
     },
     sink::SinkMapErr,
-    AsyncRead, AsyncReadExt, AsyncWrite, SinkExt,
+    AsyncRead, AsyncWrite, SinkExt,
 };
 use std::{
     pin::Pin,
