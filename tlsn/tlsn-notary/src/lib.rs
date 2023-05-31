@@ -71,21 +71,27 @@ impl Notary {
                 .unwrap();
 
             futures::try_join!(
-                create_ot_sender("ot/1", mux.clone(), ot_send_config),
-                create_ot_receiver("ot/0", mux.clone(), ot_recv_config)
+                create_ot_sender(mux.clone(), ot_send_config),
+                create_ot_receiver(mux.clone(), ot_recv_config)
             )
         };
+
+        println!("notary: ot sender and receiver start");
 
         let ((mut ot_send, ot_send_fut), (mut ot_recv, ot_recv_fut)) = futures::select! {
             err = muxer_fut => return Err(err.expect_err("muxer runs until connection closes"))?,
             res = ot_fut.fuse() => res.map_err(|err| NotaryError::MpcError(Box::new(err)))?,
         };
 
+        println!("notary: ot sender and receiver created");
+
         let notarize_fut = async {
             let encoder_seed: [u8; 32] = rand::rngs::OsRng.gen();
 
             futures::try_join!(ot_send.setup(), ot_recv.setup())
                 .map_err(|e| NotaryError::MpcError(Box::new(e)))?;
+
+            println!("notary: ot sender and receiver setup");
 
             let mut vm = DEAPVm::new(
                 "vm",
@@ -119,7 +125,11 @@ impl Notary {
                 mux.get_channel("gf2").await?,
             );
 
-            let common_config = MpcTlsCommonConfig::builder().id("test").build().unwrap();
+            let common_config = MpcTlsCommonConfig::builder()
+                .id(format!("{}/mpc_tls", &self.config.id()))
+                .handshake_commit(true)
+                .build()
+                .unwrap();
             let (ke, prf, encrypter, decrypter) = setup_components(
                 &common_config,
                 TlsRole::Follower,
@@ -133,12 +143,13 @@ impl Notary {
             .await
             .map_err(|e| NotaryError::MpcError(Box::new(e)))?;
 
+            let channel = mux.get_channel(common_config.id()).await?;
             let mut mpc_tls = MpcTlsFollower::new(
                 MpcTlsFollowerConfig::builder()
                     .common(common_config)
                     .build()
                     .unwrap(),
-                mux.get_channel("test").await?,
+                channel,
                 ke,
                 prf,
                 encrypter,
@@ -150,7 +161,11 @@ impl Notary {
                 .unwrap()
                 .as_secs();
 
+            println!("notary mpc tls start");
+
             mpc_tls.run().await?;
+
+            println!("notary mpc tls done");
 
             let mut notarize_channel = mux.get_channel("notarize").await?;
 

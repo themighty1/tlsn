@@ -58,8 +58,8 @@ async fn prover<S: AsyncWrite + AsyncRead + Send + Sync + Unpin + 'static>(socke
 
     let ((mut leader_ot_send, leader_ot_send_fut), (mut leader_ot_recv, leader_ot_recv_fut)) =
         futures::try_join!(
-            create_ot_sender("ot/0", leader_mux.clone(), leader_ot_send_config),
-            create_ot_receiver("ot/1", leader_mux.clone(), leader_ot_recv_config)
+            create_ot_sender(leader_mux.clone(), leader_ot_send_config),
+            create_ot_receiver(leader_mux.clone(), leader_ot_recv_config)
         )
         .unwrap();
 

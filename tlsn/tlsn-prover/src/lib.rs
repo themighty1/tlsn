@@ -1,12 +1,24 @@
 use bytes::Bytes;
 use futures::{
     channel::{self, oneshot::Canceled},
+    future::{join, try_join, FusedFuture},
     select_biased, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, FutureExt, SinkExt,
     StreamExt,
 };
-use std::{io::Read, sync::Arc};
+use rand::Rng;
+use std::{io::Read, pin::Pin, sync::Arc};
+use tlsn_tls_mpc::{setup_components, MpcTlsLeader, TlsRole};
+
+use actor_ot::{create_ot_receiver, create_ot_sender, ReceiverActorControl, SenderActorControl};
+use mpc_garble::{config::Role as GarbleRole, protocol::deap::DEAPVm};
+use mpc_share_conversion as ff;
 use tls_client::{client::InvalidDnsNameError, Backend, ClientConnection, ServerName};
 use tlsn_core::transcript::Transcript;
+use uid_mux::{yamux, UidYamux, UidYamuxControl};
+use utils_aio::{
+    codec::BincodeMux,
+    mux::{MuxChannel, MuxerError},
+};
 
 mod config;
 mod state;
@@ -21,18 +33,21 @@ const RX_TLS_BUF_SIZE: usize = 2 << 13; // 8 KiB
 const RX_BUF_SIZE: usize = 2 << 13; // 8 KiB
 
 #[derive(Debug)]
-pub struct Prover<T: ProverState>(T);
+pub struct Prover<T: ProverState> {
+    config: ProverConfig,
+    state: T,
+}
 
-impl<S> Prover<Initialized<S>>
+impl<S, T> Prover<Initialized<S, T>>
 where
     S: AsyncWrite + AsyncRead + Send + Unpin + 'static,
+    T: AsyncWrite + AsyncRead + Send + Unpin + 'static,
 {
     pub fn new(
         config: ProverConfig,
-        url: String,
-        // TODO: Not pass into constructor, but method needed to construct this
-        backend: Box<dyn Backend + Send + 'static>,
+        dns: &str,
         server_socket: S,
+        notary_socket: T,
     ) -> Result<(Self, TLSConnection), ProverError> {
         let (tx_sender, tx_receiver) = channel::mpsc::channel::<Bytes>(10);
         let (rx_sender, rx_receiver) = channel::mpsc::channel::<Result<Bytes, std::io::Error>>(10);
@@ -40,61 +55,104 @@ where
 
         let tls_conn = TLSConnection::new(tx_sender, rx_receiver, close_tls_sender);
 
-        let server_name = ServerName::try_from(url.as_str())?;
-        let client_config = Arc::new(config.client_config);
-        let client = ClientConnection::new(client_config, backend, server_name)?;
+        let muxer = UidYamux::new(yamux::Config::default(), notary_socket, yamux::Mode::Client);
+        let mux = BincodeMux::new(muxer.control());
+
+        let server_name = ServerName::try_from(dns)?;
 
         Ok((
-            Self(Initialized {
-                tx_receiver,
-                rx_sender,
-                close_tls_receiver,
-                client,
-                server_socket,
-                transcript_tx: Transcript::new("tx", vec![]),
-                transcript_rx: Transcript::new("rx", vec![]),
-            }),
+            Self {
+                config,
+                state: Initialized {
+                    server_name,
+                    server_socket,
+                    muxer,
+                    mux,
+                    tx_receiver,
+                    rx_sender,
+                    close_tls_receiver,
+                    transcript_tx: Transcript::new("tx", vec![]),
+                    transcript_rx: Transcript::new("rx", vec![]),
+                },
+            },
             tls_conn,
         ))
     }
 
-    // Caller needs to run future on executor
     pub async fn run(self) -> Result<Prover<Notarizing>, ProverError> {
         let Initialized {
+            server_name,
+            server_socket,
+            muxer,
+            mux,
             tx_receiver,
             rx_sender,
             close_tls_receiver,
-            client,
-            server_socket,
             mut transcript_tx,
             mut transcript_rx,
-        } = self.0;
+        } = self.state;
 
-        run_client(
-            client,
-            server_socket,
-            &mut transcript_tx,
-            &mut transcript_rx,
-            tx_receiver,
-            rx_sender,
-            close_tls_receiver,
-        )
-        .await?;
+        let mut muxer_fut = Box::pin(
+            async move {
+                let mut muxer = muxer;
+                muxer.run().await
+            }
+            .fuse(),
+        );
 
-        Ok(Prover(Notarizing {
-            transcript_tx,
-            transcript_rx,
-        }))
+        let (mpc_tls, vm, ot_recv, gf2, mut ot_fut) = futures::select! {
+            res = &mut muxer_fut => panic!(),
+            res = setup_mpc_backend(&self.config, mux).fuse() => res?,
+        };
+
+        println!("prover mpc backend setup");
+
+        let mut root_store = tls_client::RootCertStore::empty();
+        root_store.add_server_trust_anchors(webpki_roots::TLS_SERVER_ROOTS.0.iter().map(|ta| {
+            tls_client::OwnedTrustAnchor::from_subject_spki_name_constraints(
+                ta.subject,
+                ta.spki,
+                ta.name_constraints,
+            )
+        }));
+        let config = tls_client::ClientConfig::builder()
+            .with_safe_defaults()
+            .with_root_certificates(root_store)
+            .with_no_client_auth();
+        let client =
+            ClientConnection::new(Arc::new(config), Box::new(mpc_tls), server_name).unwrap();
+
+        futures::select! {
+            res = &mut muxer_fut => panic!(),
+            res = &mut ot_fut => panic!(),
+            res = run_client(
+                client,
+                server_socket,
+                &mut transcript_tx,
+                &mut transcript_rx,
+                tx_receiver,
+                rx_sender,
+                close_tls_receiver,
+            ).fuse() => res?,
+        }
+
+        Ok(Prover {
+            config: self.config,
+            state: Notarizing {
+                transcript_tx,
+                transcript_rx,
+            },
+        })
     }
 }
 
 impl Prover<Notarizing> {
     pub fn sent_transcript(&self) -> &Transcript {
-        &self.0.transcript_tx
+        &self.state.transcript_tx
     }
 
     pub fn recv_transcript(&self) -> &Transcript {
-        &self.0.transcript_rx
+        &self.state.transcript_rx
     }
 
     pub fn send_commitments(&mut self) -> Result<(), ProverError> {
@@ -122,6 +180,83 @@ pub enum ProverError {
     TranscriptError(#[from] Canceled),
 }
 
+async fn setup_mpc_backend(
+    config: &ProverConfig,
+    mut mux: BincodeMux<UidYamuxControl>,
+) -> Result<
+    (
+        MpcTlsLeader,
+        DEAPVm<SenderActorControl, ReceiverActorControl>,
+        ReceiverActorControl,
+        ff::ConverterSender<ff::Gf2_128, SenderActorControl>,
+        Pin<Box<dyn FusedFuture<Output = ()> + Send + 'static>>,
+    ),
+    ProverError,
+> {
+    println!("prover: ot sender and receiver start");
+
+    let ((mut ot_send, ot_send_fut), (mut ot_recv, ot_recv_fut)) = futures::try_join!(
+        create_ot_sender(mux.clone(), config.build_ot_sender_config()),
+        create_ot_receiver(mux.clone(), config.build_ot_receiver_config())
+    )
+    .unwrap();
+
+    println!("prover: ot sender and receiver created");
+
+    // Join the OT background futures so they can be polled together
+    let mut ot_fut = Box::pin(join(ot_send_fut, ot_recv_fut).map(|_| ()).fuse());
+
+    futures::select! {
+        _ = &mut ot_fut => panic!("OT background task failed"),
+        res = try_join(ot_send.setup(), ot_recv.setup()).fuse() => _ = res.unwrap(),
+    }
+
+    println!("prover: ot sender and receiver setup");
+
+    let mut vm = DEAPVm::new(
+        "vm",
+        GarbleRole::Leader,
+        rand::rngs::OsRng.gen(),
+        mux.get_channel("vm").await.unwrap(),
+        Box::new(mux.clone()),
+        ot_send.clone(),
+        ot_recv.clone(),
+    );
+
+    let p256_sender_config = config.build_p256_sender_config();
+    let channel = mux.get_channel(p256_sender_config.id()).await.unwrap();
+    let p256_send =
+        ff::ConverterSender::<ff::P256, _>::new(p256_sender_config, ot_send.clone(), channel);
+
+    let p256_receiver_config = config.build_p256_receiver_config();
+    let channel = mux.get_channel(p256_receiver_config.id()).await.unwrap();
+    let p256_recv =
+        ff::ConverterReceiver::<ff::P256, _>::new(p256_receiver_config, ot_recv.clone(), channel);
+
+    let gf2_config = config.build_gf2_config();
+    let channel = mux.get_channel(gf2_config.id()).await.unwrap();
+    let gf2 = ff::ConverterSender::<ff::Gf2_128, _>::new(gf2_config, ot_send.clone(), channel);
+
+    let mpc_tls_config = config.build_mpc_tls_config();
+
+    let (ke, prf, encrypter, decrypter) = setup_components(
+        mpc_tls_config.common(),
+        TlsRole::Leader,
+        &mut mux,
+        &mut vm,
+        p256_send,
+        p256_recv,
+        gf2.handle().unwrap(),
+    )
+    .await
+    .unwrap();
+
+    let channel = mux.get_channel(mpc_tls_config.common().id()).await.unwrap();
+    let mpc_tls = MpcTlsLeader::new(mpc_tls_config, channel, ke, prf, encrypter, decrypter);
+
+    Ok((mpc_tls, vm, ot_recv, gf2, ot_fut))
+}
+
 /// Runs the TLS session to completion, returning the session transcripts.
 async fn run_client<T: AsyncWrite + AsyncRead + Unpin>(
     mut client: ClientConnection,
@@ -132,6 +267,7 @@ async fn run_client<T: AsyncWrite + AsyncRead + Unpin>(
     mut rx_sender: channel::mpsc::Sender<Result<Bytes, std::io::Error>>,
     mut close_tls_receiver: channel::oneshot::Receiver<()>,
 ) -> Result<(), ProverError> {
+    println!("prover: client start");
     client.start().await?;
 
     let (mut server_rx, mut server_tx) = server_socket.split();
@@ -148,10 +284,13 @@ async fn run_client<T: AsyncWrite + AsyncRead + Unpin>(
             read_res = &mut rx_tls_fut => {
                 let received = read_res?;
 
+                println!("prover: client received {} bytes", received);
+
                 // Loop until we've processed all the data we received in this read.
                 let mut processed = 0;
                 while processed < received {
                     processed += client.read_tls(&mut &rx_tls_buf[processed..received])?;
+                    println!("handshaking: {}", client.is_handshaking());
                     match client.process_new_packets().await {
                         Ok(_) => {}
                         Err(e) => {
@@ -173,6 +312,7 @@ async fn run_client<T: AsyncWrite + AsyncRead + Unpin>(
                 rx_tls_fut = server_rx.read(&mut rx_tls_buf).fuse();
             }
             data = tx_receiver.select_next_some() => {
+                println!("forwarding data: {:?}", &data);
                 transcript_tx.extend(&data);
                 client
                     .write_all_plaintext(&data)
@@ -214,6 +354,8 @@ async fn run_client<T: AsyncWrite + AsyncRead + Unpin>(
                 Err(e) => return Err(e)?,
             };
 
+            println!("returning {} bytes", n);
+
             if n > 0 {
                 transcript_rx.extend(&rx_buf[..n]);
                 rx_sender
@@ -240,6 +382,8 @@ async fn run_client<T: AsyncWrite + AsyncRead + Unpin>(
     if !client.received_close_notify() {
         return Err(ProverError::ServerNoCloseNotify);
     }
+
+    println!("prover: client done");
 
     Ok(())
 }

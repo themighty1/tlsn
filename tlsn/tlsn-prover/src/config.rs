@@ -1,52 +1,73 @@
 use actor_ot::{OTActorReceiverConfig, OTActorSenderConfig};
 use mpc_share_conversion::{ReceiverConfig, SenderConfig};
-use tls_client::{ClientConfig, OwnedTrustAnchor, RootCertStore};
+use tls_client::{OwnedTrustAnchor, RootCertStore};
 use tlsn_tls_mpc::{MpcTlsCommonConfig, MpcTlsLeaderConfig};
 
+const DEFAULT_MAX_TRANSCRIPT_SIZE: usize = 2 << 14; // 16Kb
+
+#[derive(Debug, Clone, derive_builder::Builder)]
 pub struct ProverConfig {
-    pub client_config: ClientConfig,
-    pub mpc_config: MpcTlsLeaderConfig,
-    pub ot_config: (OTActorSenderConfig, OTActorReceiverConfig),
-    pub p256_config: (SenderConfig, ReceiverConfig),
-    pub gf2_config: SenderConfig,
-    // ...
+    #[builder(setter(into))]
+    id: String,
+
+    /// Maximum transcript size in bytes
+    ///
+    /// This includes the number of bytes sent and received to the server.
+    #[builder(default = "DEFAULT_MAX_TRANSCRIPT_SIZE")]
+    max_transcript_size: usize,
 }
 
-impl Default for ProverConfig {
-    fn default() -> Self {
-        let client_config = ClientConfig::builder()
-            .with_safe_defaults()
-            .with_root_certificates(add_mozilla_roots())
-            .with_no_client_auth();
-        let ot_sender_config = OTActorSenderConfig::builder()
-            .id("ot/0")
-            .initial_count(200_000)
-            .build()
-            .unwrap();
-        let ot_receiver_config = OTActorReceiverConfig::builder()
-            .id("ot/0")
-            .initial_count(200_000)
-            .build()
-            .unwrap();
-        let p256_config = (
-            SenderConfig::builder().id("p256/0").build().unwrap(),
-            ReceiverConfig::builder().id("p256/1").build().unwrap(),
-        );
-        let gf2_config = SenderConfig::builder().id("gf2").build().unwrap();
+impl ProverConfig {
+    /// Create a new builder for `ProverConfig`.
+    pub fn builder() -> ProverConfigBuilder {
+        ProverConfigBuilder::default()
+    }
 
-        let common_config = MpcTlsCommonConfig::builder().id("tlsn").build().unwrap();
-        let mpc_config = MpcTlsLeaderConfig::builder()
-            .common(common_config.clone())
-            .build()
-            .unwrap();
+    /// Get the maximum transcript size in bytes.
+    pub fn max_transcript_size(&self) -> usize {
+        self.max_transcript_size
+    }
 
-        Self {
-            client_config,
-            mpc_config,
-            ot_config: (ot_sender_config, ot_receiver_config),
-            p256_config,
-            gf2_config,
-        }
+    pub(crate) fn build_mpc_tls_config(&self) -> MpcTlsLeaderConfig {
+        MpcTlsLeaderConfig::builder()
+            .common(
+                MpcTlsCommonConfig::builder()
+                    .id(format!("{}/mpc_tls", &self.id))
+                    .handshake_commit(true)
+                    .build()
+                    .unwrap(),
+            )
+            .build()
+            .unwrap()
+    }
+
+    pub(crate) fn build_ot_sender_config(&self) -> OTActorSenderConfig {
+        OTActorSenderConfig::builder()
+            .id("ot/0")
+            .initial_count(self.max_transcript_size() * 8)
+            .build()
+            .unwrap()
+    }
+
+    pub(crate) fn build_ot_receiver_config(&self) -> OTActorReceiverConfig {
+        OTActorReceiverConfig::builder()
+            .id("ot/1")
+            .initial_count(self.max_transcript_size() * 8)
+            .committed()
+            .build()
+            .unwrap()
+    }
+
+    pub(crate) fn build_p256_sender_config(&self) -> SenderConfig {
+        SenderConfig::builder().id("p256/0").build().unwrap()
+    }
+
+    pub(crate) fn build_p256_receiver_config(&self) -> ReceiverConfig {
+        ReceiverConfig::builder().id("p256/1").build().unwrap()
+    }
+
+    pub(crate) fn build_gf2_config(&self) -> SenderConfig {
+        SenderConfig::builder().id("gf2").record().build().unwrap()
     }
 }
 
