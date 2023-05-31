@@ -42,10 +42,14 @@ impl Notary {
         Self { config }
     }
 
-    pub async fn run<S: AsyncWrite + AsyncRead + Send + Sync + Unpin + 'static, T>(
+    #[tracing::instrument(name = "run--notary")]
+    pub async fn run<
+        S: AsyncWrite + AsyncRead + Send + Sync + Unpin + 'static + std::fmt::Debug,
+        T,
+    >(
         &mut self,
         socket: S,
-        signer: &impl Signer<T>,
+        signer: &(impl Signer<T> + std::fmt::Debug),
     ) -> Result<SessionHeader, NotaryError>
     where
         T: Into<Signature>,
@@ -225,5 +229,13 @@ impl Notary {
         };
 
         Ok(session_header)
+    }
+}
+
+impl std::fmt::Debug for Notary {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Notary")
+            .field("config", &self.config)
+            .finish()
     }
 }

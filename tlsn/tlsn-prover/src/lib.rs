@@ -79,7 +79,7 @@ where
         ))
     }
 
-    #[tracing::instrument]
+    #[tracing::instrument(name = "run--prover")]
     pub async fn run(self) -> Result<Prover<Notarizing>, ProverError> {
         let Initialized {
             server_name,
@@ -95,6 +95,7 @@ where
 
         let mut muxer_fut = Box::pin(
             async move {
+                println!("prover muxer running");
                 let mut muxer = muxer;
                 muxer.run().await
             }
@@ -181,7 +182,7 @@ pub enum ProverError {
     TranscriptError(#[from] Canceled),
 }
 
-#[tracing::instrument]
+#[tracing::instrument(name = "setup_mpc_backend")]
 async fn setup_mpc_backend(
     config: &ProverConfig,
     mut mux: BincodeMux<UidYamuxControl>,
@@ -260,7 +261,7 @@ async fn setup_mpc_backend(
 }
 
 /// Runs the TLS session to completion, returning the session transcripts.
-#[tracing::instrument]
+#[tracing::instrument(name = "run_client")]
 async fn run_client<T: AsyncWrite + AsyncRead + Unpin + std::fmt::Debug>(
     mut client: ClientConnection,
     server_socket: T,
@@ -320,6 +321,7 @@ async fn run_client<T: AsyncWrite + AsyncRead + Unpin + std::fmt::Debug>(
                 client
                     .write_all_plaintext(&data)
                     .await?;
+                println!("forwarded all data");
             },
             _ = &mut close_tls_receiver => {
                 client_closed = true;
@@ -336,7 +338,9 @@ async fn run_client<T: AsyncWrite + AsyncRead + Unpin + std::fmt::Debug>(
         }
 
         while client.wants_write() && !client_closed {
+            println!("prover: client wants write : {:?}", &server_tx);
             client.write_tls_async(&mut server_tx).await?;
+            println!("written!!!");
         }
 
         // Flush all remaining plaintext to the server
@@ -360,6 +364,7 @@ async fn run_client<T: AsyncWrite + AsyncRead + Unpin + std::fmt::Debug>(
             println!("returning {} bytes", n);
 
             if n > 0 {
+                println!("prover: client_Read received {} bytes", n);
                 transcript_rx.extend(&rx_buf[..n]);
                 rx_sender
                     .send(Ok(Bytes::copy_from_slice(&rx_buf[..n])))

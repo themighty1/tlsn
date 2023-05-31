@@ -5,6 +5,7 @@ use tlsn_notary::{Notary, NotaryConfig};
 use tlsn_prover::{Prover, ProverConfig};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_util::compat::{FuturesAsyncReadCompatExt, TokioAsyncReadCompatExt};
+use tracing::Instrument;
 
 #[tokio::test]
 async fn test() {
@@ -15,8 +16,10 @@ async fn test() {
     tokio::join!(prover(socket_0), notary(socket_1));
 }
 
-#[tracing::instrument]
-async fn prover<T: AsyncWrite + AsyncRead + Send + Unpin + 'static + std::fmt::Debug>(notary_socket: T) {
+#[tracing::instrument(name = "prover-tests-integration")]
+async fn prover<T: AsyncWrite + AsyncRead + Send + Unpin + 'static + std::fmt::Debug>(
+    notary_socket: T,
+) {
     let dns = "tlsnotary.org";
     let server_socket = tokio::net::TcpStream::connect(dns.to_string() + ":443")
         .await
@@ -36,12 +39,14 @@ async fn prover<T: AsyncWrite + AsyncRead + Send + Unpin + 'static + std::fmt::D
             if let Err(e) = prover.run().await {
                 println!("Error in prover: {}", e);
             }
-        },
+        }
+        .instrument(tracing::info_span!("PROVER::")),
     );
 
     println!("starting handshake");
 
     let (mut request_sender, connection) = hyper::client::conn::handshake(server_socket.compat())
+        .instrument(tracing::info_span!("HYPER_HANDSHAKE::"))
         .await
         .unwrap();
 
@@ -51,6 +56,7 @@ async fn prover<T: AsyncWrite + AsyncRead + Send + Unpin + 'static + std::fmt::D
         if let Err(e) = connection.await {
             println!("Error in connection: {}", e);
         }
+        .instrument(tracing::info_span!("CONNECTION::"))
     });
 
     let request = Request::builder()
@@ -62,7 +68,11 @@ async fn prover<T: AsyncWrite + AsyncRead + Send + Unpin + 'static + std::fmt::D
 
     println!("sending request");
 
-    let response = request_sender.send_request(request).await.unwrap();
+    let response = request_sender
+        .send_request(request)
+        .instrument(tracing::info_span!("SEND_REQUEST::"))
+        .await
+        .unwrap();
 
     println!("request sent");
 
@@ -71,7 +81,9 @@ async fn prover<T: AsyncWrite + AsyncRead + Send + Unpin + 'static + std::fmt::D
     println!("Response: {:?}", response);
 }
 
-async fn notary<T: AsyncWrite + AsyncRead + Send + Sync + Unpin + 'static>(socket: T) {
+async fn notary<T: AsyncWrite + AsyncRead + Send + Sync + Unpin + 'static + std::fmt::Debug>(
+    socket: T,
+) {
     let mut notary = Notary::new(NotaryConfig::builder().id("test").build().unwrap());
 
     let signing_key = p256::ecdsa::SigningKey::from_bytes(&[1u8; 32].into()).unwrap();
