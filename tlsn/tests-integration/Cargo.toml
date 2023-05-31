@@ -8,8 +8,8 @@ publish = false
 tlsn-prover.workspace = true
 tlsn-notary.workspace = true
 console-subscriber = "0.1"
-tracing = "0.1"
-tracing-subscriber = "0.3"
+tracing.workspace = true
+tracing-subscriber.workspace = true
 
 hyper = { version = "0.14", features = ["client", "http1"] }
 

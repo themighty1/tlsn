@@ -8,14 +8,15 @@ use tokio_util::compat::{FuturesAsyncReadCompatExt, TokioAsyncReadCompatExt};
 
 #[tokio::test]
 async fn test() {
-    console_subscriber::init();
+    let subscriber = console_subscriber::init();
 
     let (socket_0, socket_1) = tokio::io::duplex(2 << 23);
 
     tokio::join!(prover(socket_0), notary(socket_1));
 }
 
-async fn prover<T: AsyncWrite + AsyncRead + Send + Unpin + 'static>(notary_socket: T) {
+#[tracing::instrument]
+async fn prover<T: AsyncWrite + AsyncRead + Send + Unpin + 'static + std::fmt::Debug>(notary_socket: T) {
     let dns = "tlsnotary.org";
     let server_socket = tokio::net::TcpStream::connect(dns.to_string() + ":443")
         .await
@@ -30,11 +31,13 @@ async fn prover<T: AsyncWrite + AsyncRead + Send + Unpin + 'static>(notary_socke
     )
     .unwrap();
 
-    tokio::spawn(async move {
-        if let Err(e) = prover.run().await {
-            println!("Error in prover: {}", e);
-        }
-    });
+    tokio::spawn(
+        async move {
+            if let Err(e) = prover.run().await {
+                println!("Error in prover: {}", e);
+            }
+        },
+    );
 
     println!("starting handshake");
 

@@ -9,6 +9,7 @@ use tlsn_core::Transcript;
 use uid_mux::{UidYamux, UidYamuxControl};
 use utils_aio::codec::BincodeMux;
 
+#[derive(Debug)]
 pub struct Initialized<S, T> {
     pub(crate) server_name: ServerName,
 

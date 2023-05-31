@@ -36,3 +36,6 @@ bytes = "1"
 
 tokio = "1.23"
 webpki-roots = "0.23"
+
+tracing = "0.1"
+tracing-subscriber = "0.3"

@@ -23,6 +23,8 @@ derive_builder.workspace = true
 
 rand.workspace = true
 signature.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
 
 [dev-dependencies]
 tlsn-tls-client = { path = "../../tls/tls-client" }

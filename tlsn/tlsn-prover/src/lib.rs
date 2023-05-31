@@ -40,8 +40,8 @@ pub struct Prover<T: ProverState> {
 
 impl<S, T> Prover<Initialized<S, T>>
 where
-    S: AsyncWrite + AsyncRead + Send + Unpin + 'static,
-    T: AsyncWrite + AsyncRead + Send + Unpin + 'static,
+    S: AsyncWrite + AsyncRead + Send + Unpin + 'static + std::fmt::Debug,
+    T: AsyncWrite + AsyncRead + Send + Unpin + 'static + std::fmt::Debug,
 {
     pub fn new(
         config: ProverConfig,
@@ -79,6 +79,7 @@ where
         ))
     }
 
+    #[tracing::instrument]
     pub async fn run(self) -> Result<Prover<Notarizing>, ProverError> {
         let Initialized {
             server_name,
@@ -180,6 +181,7 @@ pub enum ProverError {
     TranscriptError(#[from] Canceled),
 }
 
+#[tracing::instrument]
 async fn setup_mpc_backend(
     config: &ProverConfig,
     mut mux: BincodeMux<UidYamuxControl>,
@@ -258,7 +260,8 @@ async fn setup_mpc_backend(
 }
 
 /// Runs the TLS session to completion, returning the session transcripts.
-async fn run_client<T: AsyncWrite + AsyncRead + Unpin>(
+#[tracing::instrument]
+async fn run_client<T: AsyncWrite + AsyncRead + Unpin + std::fmt::Debug>(
     mut client: ClientConnection,
     server_socket: T,
     transcript_tx: &mut Transcript,

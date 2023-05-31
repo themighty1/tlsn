@@ -29,6 +29,17 @@ pub struct UidYamux<T> {
     state: Arc<Mutex<MuxState>>,
 }
 
+impl<T> std::fmt::Debug for UidYamux<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("UidYamux")
+            .field("mode", &self.mode)
+            .field("conn", &"nope")
+            .field("control", &self.control)
+            .field("state", &self.state)
+            .finish()
+    }
+}
+
 /// A muxer control for opening streams with the remote
 #[derive(Debug, Clone)]
 pub struct UidYamuxControl {
