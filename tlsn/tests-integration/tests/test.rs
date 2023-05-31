@@ -8,6 +8,8 @@ use tokio_util::compat::{FuturesAsyncReadCompatExt, TokioAsyncReadCompatExt};
 
 #[tokio::test]
 async fn test() {
+    console_subscriber::init();
+
     let (socket_0, socket_1) = tokio::io::duplex(2 << 23);
 
     tokio::join!(prover(socket_0), notary(socket_1));

@@ -7,6 +7,7 @@ publish = false
 [dev-dependencies]
 tlsn-prover.workspace = true
 tlsn-notary.workspace = true
+console-subscriber = "0.1"
 
 hyper = { version = "0.14", features = ["client", "http1"] }
 
