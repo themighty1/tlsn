@@ -8,6 +8,8 @@ publish = false
 tlsn-prover.workspace = true
 tlsn-notary.workspace = true
 console-subscriber = "0.1"
+tracing = "0.1"
+tracing-subscriber = "0.3"
 
 hyper = { version = "0.14", features = ["client", "http1"] }
 
@@ -18,5 +20,6 @@ tokio = { workspace = true, features = [
     "rt-multi-thread",
     "net",
     "macros",
+    "tracing"
 ] }
 tokio-util.workspace = true
