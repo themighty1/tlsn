@@ -547,6 +547,7 @@ impl State<ClientConnectionData> for ExpectServerHello {
             .backend
             .set_server_random(server_hello.random)
             .await?;
+        println!("Set server random noww");
         // For TLS1.3, start message encryption using
         // handshake_traffic_secret.
         match suite {

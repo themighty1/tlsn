@@ -296,8 +296,9 @@ async fn run_client<T: AsyncWrite + AsyncRead + Unpin + std::fmt::Debug>(
                     processed += client.read_tls(&mut &rx_tls_buf[processed..received])?;
                     println!("handshaking: {}", client.is_handshaking());
                     match client.process_new_packets().await {
-                        Ok(_) => {}
+                        Ok(_) => {println!("processing packets now..")},
                         Err(e) => {
+                            println!("error processing packets: {:?}", e);
                             // In case we have an alert to send describing this error,
                             // try a last-gasp write -- but don't predate the primary
                             // error.
