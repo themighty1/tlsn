@@ -6,11 +6,14 @@ use tlsn_prover::{Prover, ProverConfig};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_util::compat::{FuturesAsyncReadCompatExt, TokioAsyncReadCompatExt};
 use tracing::Instrument;
+use tracing_subscriber::fmt::format::FmtSpan;
 
 #[tokio::test]
 async fn test() {
-    let subscriber = console_subscriber::init();
-
+    let subscriber = tracing_subscriber::fmt()
+        .with_span_events(FmtSpan::ACTIVE)
+        .with_max_level(tracing::Level::TRACE)
+        .init();
     let (socket_0, socket_1) = tokio::io::duplex(2 << 23);
 
     tokio::join!(prover(socket_0), notary(socket_1));
