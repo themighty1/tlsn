@@ -66,3 +66,60 @@ async fn test_async_client() {
 
     assert!(closed_conn.client.received_close_notify());
 }
+
+#[tokio::test]
+async fn test_async_client2() {
+    use futures::AsyncReadExt;
+
+    tracing_subscriber::fmt::init();
+
+    let (client_socket, server_socket) = tokio::io::duplex(1 << 16);
+
+    let server_task = tokio::spawn(bind_test_server(server_socket.compat()));
+
+    let mut root_store = tls_client::RootCertStore::empty();
+    root_store.add(&Certificate(CA_CERT_DER.to_vec())).unwrap();
+    let config = ClientConfig::builder()
+        .with_safe_defaults()
+        .with_root_certificates(root_store)
+        .with_no_client_auth();
+    let client = ClientConnection::new(
+        Arc::new(config),
+        Box::new(RustCryptoBackend::new()),
+        ServerName::try_from(SERVER_DOMAIN).unwrap(),
+    )
+    .unwrap();
+
+    let (mut conn, tls_fut) = bind_client(client_socket.compat(), client);
+
+    let closed_tls_task = tokio::spawn(tls_fut);
+
+    println!("will write!");
+    conn.write_all(
+        concat!(
+            "GET / HTTP/1.1\r\n",
+            "Host: test-server.io\r\n",
+            "Connection: close\r\n",
+            "\r\n",
+        )
+        .as_bytes(),
+    )
+    .await;
+
+    std::thread::sleep(std::time::Duration::from_secs(1));
+
+    println!("will read!");
+    let mut plaintext = vec![0u8; 32];
+    conn.read_exact(&mut plaintext).await;
+
+    use std::str;
+    println!("plaintext: {:?}", str::from_utf8(&plaintext).unwrap());
+
+    conn.close().await.unwrap();
+
+    println!("closed_tls_task.await");
+    let closed_conn = closed_tls_task.await.unwrap().unwrap();
+    println!("after await");
+
+    assert!(closed_conn.client.received_close_notify());
+}
