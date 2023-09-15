@@ -8,7 +8,6 @@ use std::{
     env,
     fs::File as StdFile,
     io::BufReader,
-    net::{IpAddr, SocketAddr},
     ops::Range,
     sync::Arc,
 };
@@ -25,7 +24,8 @@ const ROUTE: &str = "i/api/1.1/dm/conversation";
 const USER_AGENT: &str = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36";
 
 // Setting of the notary server — make sure these are the same with those in the notary-server repository used (https://github.com/tlsnotary/notary-server)
-const NOTARY_DOMAIN: &str = "127.0.0.1";
+// const NOTARY_DOMAIN: &str = "127.0.0.1";
+const NOTARY_DOMAIN: &str = "";
 const NOTARY_PORT: u16 = 7047;
 const NOTARY_CA_CERT_PATH: &str = "./rootCA.crt";
 
@@ -61,6 +61,8 @@ pub enum ClientType {
 async fn main() {
     tracing_subscriber::fmt::init();
 
+    debug!("Start!");
+
     // Load secret variables frome environment for twitter server connection
     dotenv::dotenv().ok();
     let conversation_id = env::var("CONVERSATION_ID").unwrap();
@@ -87,8 +89,8 @@ async fn main() {
         .with_no_client_auth();
     let notary_connector = TlsConnector::from(Arc::new(client_notary_config));
 
-    let notary_socket = tokio::net::TcpStream::connect(SocketAddr::new(
-        IpAddr::V4(NOTARY_DOMAIN.parse().unwrap()),
+    let notary_socket = tokio::net::TcpStream::connect((
+        NOTARY_DOMAIN,
         NOTARY_PORT,
     ))
     .await
@@ -115,7 +117,8 @@ async fn main() {
     })
     .unwrap();
     let request = Request::builder()
-        .uri(format!("https://{NOTARY_DOMAIN}:{NOTARY_PORT}/session"))
+        // .uri(format!("https://{NOTARY_DOMAIN}:{NOTARY_PORT}/session"))
+        .uri(format!("https://{NOTARY_DOMAIN}/session"))
         .method("POST")
         .header("Host", NOTARY_DOMAIN.clone())
         // Need to specify application/json for axum to parse it as json
@@ -146,7 +149,8 @@ async fn main() {
 
     // Send notarization request via HTTP, where the underlying TCP connection will be extracted later
     let request = Request::builder()
-        .uri(format!("https://{NOTARY_DOMAIN}:{NOTARY_PORT}/notarize"))
+        // .uri(format!("https://{NOTARY_DOMAIN}:{NOTARY_PORT}/notarize"))
+        .uri(format!("https://{NOTARY_DOMAIN}/notarize"))
         .method("GET")
         .header("Host", NOTARY_DOMAIN)
         .header("Connection", "Upgrade")
@@ -287,6 +291,8 @@ async fn main() {
     )
     .await
     .unwrap();
+
+    debug!("Done!")
 }
 
 /// Find the ranges of the public and private parts of a sequence.
