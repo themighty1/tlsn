@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use std::{collections::HashMap, fmt::Debug, marker::PhantomData};
 
 use mpz_garble::{
-    Decode, DecodePrivate, Execute, Memory, Prove, Thread, ThreadPool, ValueRef, Verify,
+    Decode, DecodePrivate, Execute, Load, Memory, Prove, Thread, ThreadPool, ValueRef, Verify,
 };
 use utils::id::NestedId;
 
@@ -622,6 +622,17 @@ async fn apply_keystream<
     }
 }
 
+async fn setup_keyblock<
+    T: Memory + Load + Execute + Decode + DecodePrivate + Send,
+    C: CtrCircuit,
+>(
+    thread: &mut T,
+    block_id: NestedId,
+    config: KeyBlockConfig<C>,
+) -> Result<(), StreamCipherError> {
+    todo!()
+}
+
 #[cfg_attr(
     feature = "tracing",
     tracing::instrument(level = "trace", skip(thread), err)
@@ -641,14 +652,12 @@ async fn apply_keyblock<T: Memory + Execute + Decode + DecodePrivate + Send, C: 
         ..
     } = config;
 
-    let explicit_nonce = thread.new_public_input(
-        &block_id.append_string("explicit_nonce").to_string(),
-        explicit_nonce,
-    )?;
-    let ctr = thread.new_public_input(
-        &block_id.append_string("ctr").to_string(),
-        ctr.to_be_bytes(),
-    )?;
+    let explicit_nonce_ref = thread
+        .new_public_input::<C::NONCE>(&block_id.append_string("explicit_nonce").to_string())?;
+    let ctr_ref = thread.new_public_input::<[u8; 4]>(&block_id.append_string("ctr").to_string())?;
+
+    thread.assign(&explicit_nonce_ref, explicit_nonce)?;
+    thread.assign(&ctr_ref, ctr.to_be_bytes())?;
 
     // Sets up the input text values.
     let input_values = match input_text_config {
@@ -708,7 +717,7 @@ async fn apply_keyblock<T: Memory + Execute + Decode + DecodePrivate + Send, C: 
     thread
         .execute(
             C::circuit(),
-            &[key, iv, explicit_nonce, ctr, input_block],
+            &[key, iv, explicit_nonce_ref, ctr_ref, input_block],
             &[output_block.clone()],
         )
         .await?;
