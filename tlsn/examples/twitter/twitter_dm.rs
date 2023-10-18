@@ -21,6 +21,7 @@ const USER_AGENT: &str = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KH
 
 // Setting of the notary server — make sure these are the same with those in ../../../notary-server
 const NOTARY_HOST: &str = "127.0.0.1";
+const NOTARY_HOST_IN_CERT: &str = "tlsnotaryserver.io";
 const NOTARY_PORT: u16 = 7047;
 const NOTARY_CA_CERT_PATH: &str = "../../../notary-server/fixture/tls/rootCA.crt";
 
@@ -196,6 +197,15 @@ async fn setup_notary_connection() -> (tokio_rustls::client::TlsStream<TcpStream
 
     let mut root_store = RootCertStore::empty();
     root_store.add(&certificate).unwrap();
+    root_store.add_trust_anchors(webpki_roots::TLS_SERVER_ROOTS.0.iter().map(
+        |ta| {
+            rustls::OwnedTrustAnchor::from_subject_spki_name_constraints(
+                ta.subject,
+                ta.spki,
+                ta.name_constraints,
+            )
+        },
+    ));
 
     let client_notary_config = ClientConfig::builder()
         .with_safe_defaults()
@@ -209,7 +219,7 @@ async fn setup_notary_connection() -> (tokio_rustls::client::TlsStream<TcpStream
 
     let notary_tls_socket = notary_connector
         // Require the domain name of notary server to be the same as that in the server cert
-        .connect("tlsnotaryserver.io".try_into().unwrap(), notary_socket)
+        .connect(NOTARY_HOST_IN_CERT.try_into().unwrap(), notary_socket)
         .await
         .unwrap();
 
