@@ -10,7 +10,7 @@ use crate::{
         TranscriptCommitments,
     },
     merkle::MerkleTree,
-    transcript::get_value_ids,
+    transcript::{get_value_ids, TranscriptSubsequence},
     Direction, EncodingProvider,
 };
 
@@ -64,6 +64,14 @@ impl TranscriptCommitmentBuilder {
             sent_len,
             recv_len,
         }
+    }
+
+    /// Commits to the provided transcript subsequence.
+    pub fn commit(
+        &mut self,
+        seq: &dyn TranscriptSubsequence,
+    ) -> Result<CommitmentId, TranscriptCommitmentBuilderError> {
+        self.add_substrings_commitment(seq.ranges(), seq.direction())
     }
 
     /// Commits to the provided ranges of the `sent` transcript.

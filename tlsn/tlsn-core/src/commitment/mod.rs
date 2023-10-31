@@ -19,6 +19,19 @@ use crate::{
 
 pub use builder::{TranscriptCommitmentBuilder, TranscriptCommitmentBuilderError};
 
+/// A trait for committing to typed values within the transcript.
+pub trait TranscriptCommit<T> {
+    /// The error type.
+    type Error;
+
+    /// Commits to a value.
+    fn commit(
+        &mut self,
+        builder: &mut TranscriptCommitmentBuilder,
+        value: &T,
+    ) -> Result<(), Self::Error>;
+}
+
 /// A commitment id.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct CommitmentId(u32);

@@ -175,9 +175,9 @@ async fn main() {
     let mut proof_builder = notarized_session.data().build_substrings_proof();
 
     // Reveal everything but the auth token (which was assigned commitment id 2)
-    proof_builder.reveal(commitment_ids[0]).unwrap();
-    proof_builder.reveal(commitment_ids[1]).unwrap();
-    proof_builder.reveal(commitment_ids[3]).unwrap();
+    proof_builder.reveal_by_id(commitment_ids[0]).unwrap();
+    proof_builder.reveal_by_id(commitment_ids[1]).unwrap();
+    proof_builder.reveal_by_id(commitment_ids[3]).unwrap();
 
     let substrings_proof = proof_builder.build().unwrap();
 

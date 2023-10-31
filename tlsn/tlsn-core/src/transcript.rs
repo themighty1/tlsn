@@ -156,6 +156,15 @@ impl TranscriptSlice {
     }
 }
 
+/// A subsequence of a transcript.
+pub trait TranscriptSubsequence {
+    /// Returns the direction of the transcript subsequence.
+    fn direction(&self) -> Direction;
+
+    /// Returns the ranges of bytes in the transcript which this subsequence refers to.
+    fn ranges(&self) -> RangeSet<usize>;
+}
+
 /// The direction of data communicated over a TLS connection.
 ///
 /// This is used to differentiate between data sent to the Server, and data received from the Server.

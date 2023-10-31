@@ -83,9 +83,7 @@ async fn prover<T: AsyncWrite + AsyncRead + Send + Unpin + 'static>(notary_socke
 
     prover.commit().unwrap();
 
-    let notarized_session = prover.finalize().await.unwrap();
-
-    _ = notarized_session.proof_builder().build().unwrap();
+    prover.finalize().await.unwrap();
 }
 
 #[instrument(skip(socket))]

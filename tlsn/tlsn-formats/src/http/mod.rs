@@ -1,76 +1,25 @@
 //! Tooling for working with HTTP data.
 
-mod body;
-mod commitment;
+mod commit;
 mod parse;
-mod proof;
 mod session;
+mod types;
 
-pub use body::{Body, BodyCommitmentBuilder, BodyProofBuilder};
-pub use commitment::{
-    HttpCommitmentBuilder, HttpCommitmentBuilderError, HttpRequestCommitmentBuilder,
-    HttpResponseCommitmentBuilder,
-};
+pub use commit::{HttpCommitmentError, HttpCommitter};
 pub use parse::{parse_body, parse_requests, parse_responses, ParseError};
-pub use proof::{HttpProofBuilder, HttpProofBuilderError};
 pub use session::NotarizedHttpSession;
+pub use types::{
+    Body, Code, Header, HeaderName, HeaderValue, Method, Path, Reason, Request, RequestLine,
+    Response, Status,
+};
 
-use serde::{Deserialize, Serialize};
-use spansy::Spanned;
-use utils::range::{RangeDifference, RangeSet, RangeUnion};
-
-static PUBLIC_HEADERS: &[&str] = &["content-length", "content-type"];
-
-/// An HTTP request.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Request(pub(crate) spansy::http::Request);
-
-impl Request {
-    pub(crate) fn public_ranges(&self) -> RangeSet<usize> {
-        let mut private_ranges = RangeSet::default();
-
-        let path_range = self.0.path.range();
-
-        private_ranges = private_ranges.union(&path_range);
-
-        for header in &self.0.headers {
-            let name = header.name.span().as_str().to_ascii_lowercase();
-            let range = header.value.span().range();
-            if !PUBLIC_HEADERS.contains(&name.as_str()) {
-                private_ranges = private_ranges.union(&range);
-            }
-        }
-
-        if let Some(body) = &self.0.body {
-            private_ranges = private_ranges.union(&body.span().range());
-        }
-
-        self.0.span().range().difference(&private_ranges)
-    }
-}
-
-/// An HTTP response.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Response(pub(crate) spansy::http::Response);
-
-impl Response {
-    pub(crate) fn public_ranges(&self) -> RangeSet<usize> {
-        let mut private_ranges = RangeSet::default();
-
-        for header in &self.0.headers {
-            let name = header.name.span().as_str().to_ascii_lowercase();
-            let range = header.value.span().range();
-            if !PUBLIC_HEADERS.contains(&name.as_str()) {
-                private_ranges = private_ranges.union(&range);
-            }
-        }
-
-        if let Some(body) = &self.0.body {
-            private_ranges = private_ranges.union(&body.span().range());
-        }
-
-        self.0.span().range().difference(&private_ranges)
-    }
+/// An HTTP transcript.
+#[derive(Debug)]
+pub struct HttpTranscript {
+    /// The requests sent to the server.
+    pub requests: Vec<Request>,
+    /// The responses received from the server.
+    pub responses: Vec<Response>,
 }
 
 #[cfg(test)]
@@ -79,11 +28,13 @@ mod tests {
 
     use bytes::Bytes;
     use tlsn_core::{
-        commitment::{CommitmentKind, TranscriptCommitmentBuilder},
+        commitment::{CommitmentKind, TranscriptCommit, TranscriptCommitmentBuilder},
         fixtures,
         proof::SubstringsProofBuilder,
         Direction, Transcript,
     };
+
+    use crate::json::JsonValue;
 
     static TX: &[u8] = b"GET / HTTP/1.1\r\nHost: localhost\r\n\r\n\
     POST /hello HTTP/1.1\r\nHost: localhost\r\nContent-Length: 44\r\nContent-Type: application/json\r\n\r\n\
@@ -96,7 +47,7 @@ mod tests {
 
     #[test]
     fn test_http_commit() {
-        let mut transcript_commitment_builder = TranscriptCommitmentBuilder::new(
+        let mut builder = TranscriptCommitmentBuilder::new(
             fixtures::encoding_provider(TX, RX),
             TX.len(),
             RX.len(),
@@ -105,29 +56,34 @@ mod tests {
         let requests = parse_requests(Bytes::copy_from_slice(TX)).unwrap();
         let responses = parse_responses(Bytes::copy_from_slice(RX)).unwrap();
 
-        HttpCommitmentBuilder::new(&mut transcript_commitment_builder, &requests, &responses)
-            .build()
+        let transcript = HttpTranscript {
+            requests,
+            responses,
+        };
+
+        HttpCommitter::default()
+            .commit(&mut builder, &transcript)
             .unwrap();
 
-        let commitments = transcript_commitment_builder.build().unwrap();
+        let commitments = builder.build().unwrap();
 
         // Path
         assert!(commitments
             .get_id_by_info(CommitmentKind::Blake3, (4..5).into(), Direction::Sent)
             .is_some());
 
-        // Host
+        // Host header
         assert!(commitments
-            .get_id_by_info(CommitmentKind::Blake3, (22..31).into(), Direction::Sent)
+            .get_id_by_info(CommitmentKind::Blake3, (16..33).into(), Direction::Sent)
             .is_some());
-        // foo
+        // foo value
         assert!(commitments
             .get_id_by_info(CommitmentKind::Blake3, (137..140).into(), Direction::Sent)
             .is_some());
 
-        // Cookie
+        // Cookie header
         assert!(commitments
-            .get_id_by_info(CommitmentKind::Blake3, (25..43).into(), Direction::Received)
+            .get_id_by_info(CommitmentKind::Blake3, (17..45).into(), Direction::Received)
             .is_some());
         // Body
         assert!(commitments
@@ -144,7 +100,7 @@ mod tests {
         let transcript_tx = Transcript::new(TX);
         let transcript_rx = Transcript::new(RX);
 
-        let mut transcript_commitment_builder = TranscriptCommitmentBuilder::new(
+        let mut builder = TranscriptCommitmentBuilder::new(
             fixtures::encoding_provider(TX, RX),
             TX.len(),
             RX.len(),
@@ -153,44 +109,60 @@ mod tests {
         let requests = parse_requests(Bytes::copy_from_slice(TX)).unwrap();
         let responses = parse_responses(Bytes::copy_from_slice(RX)).unwrap();
 
-        HttpCommitmentBuilder::new(&mut transcript_commitment_builder, &requests, &responses)
-            .build()
+        let transcript = HttpTranscript {
+            requests,
+            responses,
+        };
+
+        HttpCommitter::default()
+            .commit(&mut builder, &transcript)
             .unwrap();
 
-        let commitments = transcript_commitment_builder.build().unwrap();
+        let commitments = builder.build().unwrap();
 
-        let spb = SubstringsProofBuilder::new(&commitments, &transcript_tx, &transcript_rx);
+        let mut builder = SubstringsProofBuilder::new(&commitments, &transcript_tx, &transcript_rx);
 
-        let mut builder = HttpProofBuilder::new(spb, &commitments, &requests, &responses);
-
-        let mut req_0 = builder.request(0).unwrap();
-
-        req_0.path().unwrap();
-        req_0.header("host").unwrap();
-
-        let mut req_1 = builder.request(1).unwrap();
-
-        req_1.path().unwrap();
-
-        let BodyProofBuilder::Json(mut json) = req_1.body().unwrap() else {
+        let req_0 = &transcript.requests[0];
+        let req_1 = &transcript.requests[1];
+        let Body::Json(JsonValue::Object(req_1_body)) = req_1.body.as_ref().unwrap() else {
             unreachable!();
         };
+        let resp_0 = &transcript.responses[0];
+        let resp_1 = &transcript.responses[1];
 
-        json.path("bazz").unwrap();
+        builder
+            .reveal(&req_0.without_data(), CommitmentKind::Blake3)
+            .unwrap()
+            .reveal(&req_0.request.path, CommitmentKind::Blake3)
+            .unwrap()
+            .reveal(
+                req_0.headers_with_name("host").next().unwrap(),
+                CommitmentKind::Blake3,
+            )
+            .unwrap();
 
-        let mut resp_0 = builder.response(0).unwrap();
+        builder
+            .reveal(&req_1.without_data(), CommitmentKind::Blake3)
+            .unwrap()
+            .reveal(&req_1_body.without_pairs(), CommitmentKind::Blake3)
+            .unwrap()
+            .reveal(req_1_body.get("bazz").unwrap(), CommitmentKind::Blake3)
+            .unwrap();
 
-        resp_0.header("cookie").unwrap();
+        builder
+            .reveal(&resp_0.without_data(), CommitmentKind::Blake3)
+            .unwrap()
+            .reveal(
+                resp_0.headers_with_name("cookie").next().unwrap(),
+                CommitmentKind::Blake3,
+            )
+            .unwrap();
 
-        assert!(matches!(resp_0.body().unwrap(), BodyProofBuilder::Json(_)));
-
-        let mut resp_1 = builder.response(1).unwrap();
-
-        let BodyProofBuilder::Unknown(mut unknown) = resp_1.body().unwrap() else {
-            unreachable!();
-        };
-
-        unknown.all().unwrap();
+        builder
+            .reveal(&resp_1.without_data(), CommitmentKind::Blake3)
+            .unwrap()
+            .reveal(resp_1.body.as_ref().unwrap(), CommitmentKind::Blake3)
+            .unwrap();
 
         let proof = builder.build().unwrap();
 

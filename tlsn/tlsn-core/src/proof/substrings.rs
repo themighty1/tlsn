@@ -8,15 +8,29 @@ use utils::range::{RangeDisjoint, RangeSet, RangeUnion};
 
 use crate::{
     commitment::{
-        Commitment, CommitmentId, CommitmentInfo, CommitmentOpening, TranscriptCommitments,
+        Commitment, CommitmentId, CommitmentInfo, CommitmentKind, CommitmentOpening,
+        TranscriptCommitments,
     },
     merkle::MerkleProof,
-    transcript::get_value_ids,
+    transcript::{get_value_ids, TranscriptSubsequence},
     Direction, EncodingId, RedactedTranscript, SessionHeader, Transcript, TranscriptSlice,
     MAX_TOTAL_COMMITTED_DATA,
 };
 
 use mpz_garble_core::Encoder;
+
+/// A trait for proving of typed data contained within a transcript.
+pub trait SubstringProve<T> {
+    /// The error type.
+    type Error;
+
+    /// Proves that the provided value is contained within the transcript.
+    fn prove(
+        &mut self,
+        builder: &mut SubstringsProofBuilder<'_>,
+        value: &T,
+    ) -> Result<(), Self::Error>;
+}
 
 /// An error for [`SubstringsProofBuilder`]
 #[derive(Debug, thiserror::Error)]
@@ -25,6 +39,9 @@ pub enum SubstringsProofBuilderError {
     /// Invalid commitment id.
     #[error("invalid commitment id: {0:?}")]
     InvalidCommitmentId(CommitmentId),
+    /// Missing commitment
+    #[error("missing commitment")]
+    MissingCommitment,
     /// Invalid commitment type.
     #[error("commitment {0:?} is not a substrings commitment")]
     InvalidCommitmentType(CommitmentId),
@@ -58,8 +75,25 @@ impl<'a> SubstringsProofBuilder<'a> {
         }
     }
 
+    /// Reveals data corresponding to the provided transcript subsequence.
+    pub fn reveal(
+        &mut self,
+        seq: &dyn TranscriptSubsequence,
+        commitment_kind: CommitmentKind,
+    ) -> Result<&mut Self, SubstringsProofBuilderError> {
+        let com = self
+            .commitments
+            .get_id_by_info(commitment_kind, seq.ranges(), seq.direction())
+            .ok_or(SubstringsProofBuilderError::MissingCommitment)?;
+
+        self.reveal_by_id(com)
+    }
+
     /// Reveals data corresponding to the provided commitment id
-    pub fn reveal(&mut self, id: CommitmentId) -> Result<&mut Self, SubstringsProofBuilderError> {
+    pub fn reveal_by_id(
+        &mut self,
+        id: CommitmentId,
+    ) -> Result<&mut Self, SubstringsProofBuilderError> {
         let commitment = self
             .commitments
             .get(&id)

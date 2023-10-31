@@ -1,44 +1,57 @@
 //! Tooling for working with JSON data.
 
-mod commitment;
-mod proof;
+mod commit;
+mod types;
 
-pub use commitment::{JsonCommitmentBuilder, JsonCommitmentBuilderError};
-pub use proof::{JsonProofBuilder, JsonProofBuilderError};
+pub use commit::{JsonCommitmentError, JsonCommitter};
+pub use types::{Array, Bool, JsonKey, JsonValue, KeyValue, Null, Number, Object, String};
 
-use serde::{Deserialize, Serialize};
-use spansy::{
-    json::{JsonValue, JsonVisit},
-    Spanned,
-};
-use utils::range::{RangeDifference, RangeSet, RangeUnion};
-
-/// A JSON body
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct JsonBody(pub(crate) JsonValue);
-
-/// Computes all the public ranges of a JSON value.
-///
-/// Right now this is just the ranges of all the numbers and strings.
-pub(crate) fn public_ranges(value: &JsonValue) -> RangeSet<usize> {
-    #[derive(Default)]
-    struct PrivateRanges {
-        private_ranges: RangeSet<usize>,
+/// A visitor for JSON values.
+pub trait JsonVisit {
+    /// Visit a key-value pair in a JSON object.
+    fn visit_key_value(&mut self, node: &KeyValue) {
+        self.visit_key(&node.key);
+        self.visit_value(&node.value);
     }
 
-    // For now only numbers and strings are redactable.
-    impl JsonVisit for PrivateRanges {
-        fn visit_number(&mut self, node: &spansy::json::Number) {
-            self.private_ranges = self.private_ranges.union(&node.span().range());
-        }
+    /// Visit a key in a JSON object.
+    fn visit_key(&mut self, _node: &JsonKey) {}
 
-        fn visit_string(&mut self, node: &spansy::json::String) {
-            self.private_ranges = self.private_ranges.union(&node.span().range());
+    /// Visit a JSON value.
+    fn visit_value(&mut self, node: &JsonValue) {
+        match node {
+            JsonValue::Null(value) => self.visit_null(value),
+            JsonValue::Bool(value) => self.visit_bool(value),
+            JsonValue::Number(value) => self.visit_number(value),
+            JsonValue::String(value) => self.visit_string(value),
+            JsonValue::Array(value) => self.visit_array(value),
+            JsonValue::Object(value) => self.visit_object(value),
         }
     }
 
-    let mut visitor = PrivateRanges::default();
-    visitor.visit_value(value);
+    /// Visit an array value.
+    fn visit_array(&mut self, node: &Array) {
+        for elem in &node.elems {
+            self.visit_value(elem);
+        }
+    }
 
-    value.span().range().difference(&visitor.private_ranges)
+    /// Visit an object value.
+    fn visit_object(&mut self, node: &Object) {
+        for kv in &node.pairs {
+            self.visit_key_value(kv);
+        }
+    }
+
+    /// Visit a null value.
+    fn visit_null(&mut self, _node: &Null) {}
+
+    /// Visit a boolean value.
+    fn visit_bool(&mut self, _node: &Bool) {}
+
+    /// Visit a number value.
+    fn visit_number(&mut self, _node: &Number) {}
+
+    /// Visit a string value.
+    fn visit_string(&mut self, _node: &String) {}
 }

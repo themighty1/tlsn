@@ -137,10 +137,10 @@ async fn main() {
 
     // Reveal all the public ranges
     for commitment_id in sent_commitments {
-        proof_builder.reveal(commitment_id).unwrap();
+        proof_builder.reveal_by_id(commitment_id).unwrap();
     }
     for commitment_id in recv_commitments {
-        proof_builder.reveal(commitment_id).unwrap();
+        proof_builder.reveal_by_id(commitment_id).unwrap();
     }
 
     let substrings_proof = proof_builder.build().unwrap();

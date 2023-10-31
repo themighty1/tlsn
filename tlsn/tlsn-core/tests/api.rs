@@ -154,9 +154,9 @@ fn test_api() {
     let mut substrings_proof_builder = session.data().build_substrings_proof();
 
     substrings_proof_builder
-        .reveal(commitment_id_1)
+        .reveal_by_id(commitment_id_1)
         .unwrap()
-        .reveal(commitment_id_2)
+        .reveal_by_id(commitment_id_2)
         .unwrap();
 
     let substrings_proof = substrings_proof_builder.build().unwrap();
