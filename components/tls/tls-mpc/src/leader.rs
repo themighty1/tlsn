@@ -1,4 +1,7 @@
-use std::any::Any;
+use std::{
+    any::Any,
+    collections::{HashMap, VecDeque},
+};
 
 use async_trait::async_trait;
 use futures::{SinkExt, TryFutureExt};
@@ -30,7 +33,7 @@ use tls_core::{
 };
 
 use crate::{
-    msg::{DecryptMessage, EncryptMessage, MpcTlsMessage},
+    msg::{CommitMessage, DecryptMessage, EncryptMessage, MpcTlsMessage},
     MpcTlsChannel, MpcTlsError, MpcTlsLeaderConfig,
 };
 
@@ -63,6 +66,8 @@ struct ConnectionState {
 
     sent_bytes: usize,
     recv_bytes: usize,
+
+    ciphertext_buffer: HashMap<u64, OpaqueMessage>,
 }
 
 impl Default for ConnectionState {
@@ -79,6 +84,7 @@ impl Default for ConnectionState {
             handshake_decommitment: Default::default(),
             sent_bytes: 0,
             recv_bytes: 0,
+            ciphertext_buffer: Default::default(),
         }
     }
 }
@@ -300,6 +306,30 @@ impl MpcTlsLeader {
         Ok(vd.to_vec())
     }
 
+    /// Buffers and commits to a received ciphertext.
+    pub async fn buffer_encrypted(
+        &mut self,
+        m: OpaqueMessage,
+        seq: u64,
+    ) -> Result<(), MpcTlsError> {
+        let mut payload = m.payload.0.clone();
+
+        let explicit_nonce: Vec<u8> = payload.drain(..8).collect();
+        let ciphertext = payload;
+
+        self.channel
+            .send(MpcTlsMessage::CommitMessage(CommitMessage {
+                typ: m.typ,
+                explicit_nonce,
+                ciphertext,
+            }))
+            .await?;
+
+        self.conn_state.ciphertext_buffer.push_back(m);
+
+        Ok(())
+    }
+
     /// Encrypt a message
     #[cfg_attr(
         feature = "tracing",
@@ -402,12 +432,7 @@ impl MpcTlsLeader {
         let typ: ContentType = m.typ;
 
         self.channel
-            .send(MpcTlsMessage::DecryptMessage(DecryptMessage {
-                typ: m.typ,
-                explicit_nonce: explicit_nonce.clone(),
-                seq,
-                ciphertext: ciphertext.clone(),
-            }))
+            .send(MpcTlsMessage::DecryptMessage(DecryptMessage))
             .await?;
 
         // Set the transcript id depending on the type of message
@@ -536,6 +561,20 @@ impl Backend for MpcTlsLeader {
         self.compute_session_keys()
             .await
             .map_err(|e| BackendError::InternalError(e.to_string()))
+    }
+
+    async fn buffer_ciphertext(
+        &mut self,
+        msg: OpaqueMessage,
+        seq: u64,
+    ) -> Result<(), BackendError> {
+        self.buffer_encrypted(msg)
+            .await
+            .map_err(|e| BackendError::InternalError(e.to_string()))
+    }
+
+    async fn remove_ciphertext(&mut self, seq: u64) -> Result<Option<OpaqueMessage>, BackendError> {
+        Ok(self.conn_state.ciphertext_buffer.pop_front())
     }
 
     async fn encrypt(

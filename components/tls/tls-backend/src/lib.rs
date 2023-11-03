@@ -110,6 +110,19 @@ pub trait Backend: Send {
     /// Perform the encryption over the concerned TLS message.
     async fn encrypt(&mut self, msg: PlainMessage, seq: u64)
         -> Result<OpaqueMessage, BackendError>;
+    /// Buffer the encrypted TLS message.
+    ///
+    /// # Arguments
+    ///
+    /// * `seq` - Sequence number of the TLS message.
+    async fn buffer_ciphertext(&mut self, seq: u64, msg: OpaqueMessage)
+        -> Result<(), BackendError>;
+    /// Returns next encrypted message ready for decryption.
+    ///
+    /// # Arguments
+    ///
+    /// * `seq` - Sequence number of the TLS message.
+    async fn remove_ciphertext(&mut self, seq: u64) -> Result<Option<OpaqueMessage>, BackendError>;
     /// Perform the decryption over the concerned TLS message.
     async fn decrypt(&mut self, msg: OpaqueMessage, seq: u64)
         -> Result<PlainMessage, BackendError>;

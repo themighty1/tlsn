@@ -464,6 +464,10 @@ impl ConnectionCommon {
         }
 
         while let Some(msg) = self.message_deframer.frames.pop_front() {
+            self.backend.buffer_ciphertext(msg).await?;
+        }
+
+        while let Some(msg) = self.backend.remove_ciphertext().await? {
             match self.process_msg(msg, state).await {
                 Ok(new) => state = new,
                 Err(e) => {

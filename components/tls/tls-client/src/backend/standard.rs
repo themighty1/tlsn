@@ -11,7 +11,7 @@ use rand::{rngs::OsRng, thread_rng, Rng};
 use digest::Digest;
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
-use std::{any::Any, convert::TryInto};
+use std::{any::Any, collections::HashMap, convert::TryInto};
 use tls_core::{
     cert::ServerCertDetails,
     ke::ServerKxDetails,
@@ -86,6 +86,7 @@ pub struct RustCryptoBackend {
     cipher_suite: Option<SupportedCipherSuite>,
     curve: Option<NamedGroup>,
     implemented_suites: [CipherSuite; 2],
+    ciphertext_buffer: HashMap<u64, OpaqueMessage>,
     encrypter: Option<Encrypter>,
     decrypter: Option<Decrypter>,
 }
@@ -108,6 +109,7 @@ impl RustCryptoBackend {
                 CipherSuite::TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
                 CipherSuite::TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
             ],
+            ciphertext_buffer: HashMap::new(),
             encrypter: None,
             decrypter: None,
         }
@@ -416,6 +418,20 @@ impl Backend for RustCryptoBackend {
 
     async fn prepare_encryption(&mut self) -> Result<(), BackendError> {
         Ok(())
+    }
+
+    async fn buffer_ciphertext(
+        &mut self,
+        seq: u64,
+        msg: OpaqueMessage,
+    ) -> Result<(), BackendError> {
+        self.ciphertext_buffer.insert(seq, msg);
+
+        Ok(())
+    }
+
+    async fn remove_ciphertext(&mut self, seq: u64) -> Result<Option<OpaqueMessage>, BackendError> {
+        Ok(self.ciphertext_buffer.remove(&seq))
     }
 
     async fn encrypt(

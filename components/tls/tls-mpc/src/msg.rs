@@ -22,15 +22,23 @@ pub enum ContentTypeDef {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum MpcTlsMessage {
     HandshakeCommitment(Hash),
+    CommitMessage(CommitMessage),
     EncryptMessage(EncryptMessage),
-    DecryptMessage(DecryptMessage),
+    DecryptMessage,
     SendCloseNotify(EncryptMessage),
-    Close(Close),
+    Close,
 }
 
-/// Close the connection
+/// Commit to a received ciphertext.
+#[allow(missing_docs)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Close;
+pub struct CommitMessage {
+    #[serde(with = "ContentTypeDef")]
+    pub typ: ContentType,
+    pub explicit_nonce: Vec<u8>,
+    pub ciphertext: Vec<u8>,
+    pub seq: u64,
+}
 
 /// Encrypt a message
 #[allow(missing_docs)]
@@ -42,13 +50,7 @@ pub struct EncryptMessage {
     pub len: usize,
 }
 
-/// Decrypt a message
+/// Decrypt the next message
 #[allow(missing_docs)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DecryptMessage {
-    #[serde(with = "ContentTypeDef")]
-    pub typ: ContentType,
-    pub explicit_nonce: Vec<u8>,
-    pub ciphertext: Vec<u8>,
-    pub seq: u64,
-}
+pub struct DecryptMessage;

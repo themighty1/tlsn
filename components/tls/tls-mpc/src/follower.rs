@@ -1,3 +1,5 @@
+use std::collections::VecDeque;
+
 use futures::StreamExt;
 
 use hmac_sha256 as prf;
@@ -23,7 +25,7 @@ use tls_core::{
 use utils_aio::expect_msg_or_err;
 
 use crate::{
-    msg::{DecryptMessage, EncryptMessage, MpcTlsMessage},
+    msg::{CommitMessage, DecryptMessage, EncryptMessage, MpcTlsMessage},
     MpcTlsChannel, MpcTlsError, MpcTlsFollowerConfig,
 };
 
@@ -38,6 +40,7 @@ pub struct MpcTlsFollower {
     decrypter: Decrypter,
 
     handshake_commitment: Option<Hash>,
+    committed_msgs: VecDeque<CommitMessage>,
 
     closed: bool,
 }
@@ -80,6 +83,7 @@ impl MpcTlsFollower {
             encrypter,
             decrypter,
             handshake_commitment: None,
+            committed_msgs: VecDeque::new(),
             closed: false,
         }
     }
@@ -208,13 +212,22 @@ impl MpcTlsFollower {
         self.encrypter.encrypt_blind(typ, seq, len).await
     }
 
-    async fn handle_decrypt_msg(&mut self, msg: DecryptMessage) -> Result<(), MpcTlsError> {
-        let DecryptMessage {
+    fn handle_commit_msg(&mut self, msg: CommitMessage) -> Result<(), MpcTlsError> {
+        self.committed_msgs.push_back(msg);
+
+        Ok(())
+    }
+
+    async fn handle_decrypt_msg(&mut self) -> Result<(), MpcTlsError> {
+        let Some(CommitMessage {
             typ,
             explicit_nonce,
             ciphertext,
             seq,
-        } = msg;
+        }) = self.committed_msgs.pop_front()
+        else {
+            todo!()
+        };
 
         if self.total_bytes_transferred() + ciphertext.len()
             > self.config.common().max_transcript_size()
@@ -281,8 +294,11 @@ impl MpcTlsFollower {
                 MpcTlsMessage::EncryptMessage(msg) => {
                     self.handle_encrypt_msg(msg).await?;
                 }
-                MpcTlsMessage::DecryptMessage(msg) => {
-                    self.handle_decrypt_msg(msg).await?;
+                MpcTlsMessage::CommitMessage(msg) => {
+                    self.handle_commit_msg(msg)?;
+                }
+                MpcTlsMessage::DecryptMessage => {
+                    self.handle_decrypt_msg().await?;
                 }
                 MpcTlsMessage::SendCloseNotify(msg) => {
                     self.handle_close_notify(msg).await?;
