@@ -11,7 +11,11 @@ use rand::{rngs::OsRng, thread_rng, Rng};
 use digest::Digest;
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
-use std::{any::Any, collections::HashMap, convert::TryInto};
+use std::{
+    any::Any,
+    collections::{HashMap, VecDeque},
+    convert::TryInto,
+};
 use tls_core::{
     cert::ServerCertDetails,
     ke::ServerKxDetails,
@@ -26,6 +30,9 @@ use tls_core::{
 };
 
 type HmacSha256 = Hmac<Sha256>;
+
+static SEQ_SOFT_LIMIT: u64 = 0xffff_ffff_ffff_0000u64;
+static SEQ_HARD_LIMIT: u64 = 0xffff_ffff_ffff_fffeu64;
 
 pub(crate) fn hmac_sha256(key: &[u8], input: &[u8]) -> [u8; 32] {
     let mut mac = HmacSha256::new_from_slice(key).unwrap();
@@ -70,6 +77,13 @@ pub(crate) fn seed_sf(handshake_blob: &[u8]) -> [u8; 47] {
     seed
 }
 
+#[derive(Debug, PartialEq)]
+enum DirectionState {
+    Invalid,
+    Prepared,
+    Active,
+}
+
 /// Implementation of TLS backend using RustCrypto primitives
 pub struct RustCryptoBackend {
     client_random: Option<Random>,
@@ -86,9 +100,16 @@ pub struct RustCryptoBackend {
     cipher_suite: Option<SupportedCipherSuite>,
     curve: Option<NamedGroup>,
     implemented_suites: [CipherSuite; 2],
-    ciphertext_buffer: HashMap<u64, OpaqueMessage>,
+    incoming_buffer: VecDeque<OpaqueMessage>,
+
+    write_seq: u64,
+    read_seq: u64,
+
     encrypter: Option<Encrypter>,
     decrypter: Option<Decrypter>,
+
+    encrypt_state: DirectionState,
+    decrypt_state: DirectionState,
 }
 
 impl RustCryptoBackend {
@@ -109,9 +130,13 @@ impl RustCryptoBackend {
                 CipherSuite::TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
                 CipherSuite::TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
             ],
-            ciphertext_buffer: HashMap::new(),
+            incoming_buffer: VecDeque::new(),
+            write_seq: 0,
+            read_seq: 0,
             encrypter: None,
             decrypter: None,
+            encrypt_state: DirectionState::Invalid,
+            decrypt_state: DirectionState::Invalid,
         }
     }
 
@@ -250,6 +275,34 @@ impl Backend for RustCryptoBackend {
 
     fn as_any_mut(&mut self) -> &mut dyn Any {
         self
+    }
+
+    fn is_encrypting(&self) -> bool {
+        self.encrypter.is_some() && self.encrypt_state == DirectionState::Active
+    }
+
+    fn is_decrypting(&self) -> bool {
+        self.decrypter.is_some() && self.decrypt_state == DirectionState::Active
+    }
+
+    fn start_encrypting(&mut self) {
+        self.encrypt_state = DirectionState::Active;
+    }
+
+    fn start_decrypting(&mut self) {
+        self.decrypt_state = DirectionState::Active;
+    }
+
+    fn wants_close_before_encrypt(&self) -> bool {
+        self.write_seq == SEQ_SOFT_LIMIT
+    }
+
+    fn wants_close_before_decrypt(&self) -> bool {
+        self.read_seq == SEQ_SOFT_LIMIT
+    }
+
+    fn encrypt_exhausted(&self) -> bool {
+        self.write_seq >= SEQ_HARD_LIMIT
     }
 
     async fn set_protocol_version(&mut self, version: ProtocolVersion) -> Result<(), BackendError> {
@@ -420,25 +473,21 @@ impl Backend for RustCryptoBackend {
         Ok(())
     }
 
-    async fn buffer_ciphertext(
-        &mut self,
-        seq: u64,
-        msg: OpaqueMessage,
-    ) -> Result<(), BackendError> {
-        self.ciphertext_buffer.insert(seq, msg);
+    async fn prepare_decryption(&mut self) -> Result<(), BackendError> {
+        Ok(())
+    }
+
+    async fn buffer_incoming(&mut self, msg: OpaqueMessage) -> Result<(), BackendError> {
+        self.incoming_buffer.push_front(msg);
 
         Ok(())
     }
 
-    async fn remove_ciphertext(&mut self, seq: u64) -> Result<Option<OpaqueMessage>, BackendError> {
-        Ok(self.ciphertext_buffer.remove(&seq))
+    async fn next_incoming(&mut self) -> Result<Option<OpaqueMessage>, BackendError> {
+        Ok(self.incoming_buffer.pop_back())
     }
 
-    async fn encrypt(
-        &mut self,
-        msg: PlainMessage,
-        seq: u64,
-    ) -> Result<OpaqueMessage, BackendError> {
+    async fn encrypt(&mut self, msg: PlainMessage) -> Result<OpaqueMessage, BackendError> {
         let enc = self
             .encrypter
             .as_mut()
@@ -446,11 +495,14 @@ impl Backend for RustCryptoBackend {
                 "Encrypter not ready".to_string(),
             ))?;
 
+        let seq = self.write_seq;
+        self.write_seq += 1;
+
         match enc.cipher_suite {
             CipherSuite::TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
             | CipherSuite::TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256 => match msg.version {
                 ProtocolVersion::TLSv1_2 => {
-                    return enc.encrypt_aes128gcm(&msg, seq, &seq.to_be_bytes());
+                    return enc.encrypt_aes128gcm(&msg, seq);
                 }
                 version => {
                     return Err(BackendError::UnsupportedProtocolVersion(version));
@@ -462,17 +514,16 @@ impl Backend for RustCryptoBackend {
         }
     }
 
-    async fn decrypt(
-        &mut self,
-        msg: OpaqueMessage,
-        seq: u64,
-    ) -> Result<PlainMessage, BackendError> {
+    async fn decrypt(&mut self, msg: OpaqueMessage) -> Result<PlainMessage, BackendError> {
         let dec = self
             .decrypter
             .as_mut()
             .ok_or(BackendError::DecryptionError(
                 "Decrypter not ready".to_string(),
             ))?;
+
+        let seq = self.read_seq;
+        self.read_seq += 1;
 
         match dec.cipher_suite {
             CipherSuite::TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
@@ -508,10 +559,9 @@ impl Encrypter {
 
     /// Encrypt with AES128GCM using TLS-specific AAD.
     fn encrypt_aes128gcm(
-        &self,
+        &mut self,
         m: &PlainMessage,
         seq: u64,
-        explicit_nonce: &[u8; 8],
     ) -> Result<OpaqueMessage, BackendError> {
         let mut aad = [0u8; 13];
         aad[..8].copy_from_slice(&seq.to_be_bytes());
@@ -525,7 +575,7 @@ impl Encrypter {
 
         let mut nonce = [0u8; 12];
         nonce[..4].copy_from_slice(&self.write_iv);
-        nonce[4..].copy_from_slice(explicit_nonce);
+        nonce[4..].copy_from_slice(&seq.to_be_bytes());
         let nonce = GenericArray::from_slice(&nonce);
         let cipher = Aes128Gcm::new_from_slice(&self.write_key).unwrap();
         // ciphertext will have the MAC appended
@@ -535,7 +585,7 @@ impl Encrypter {
 
         // prepend the explicit nonce
         let mut nonce_ct_mac = vec![0u8; 0];
-        nonce_ct_mac.extend(explicit_nonce.iter());
+        nonce_ct_mac.extend(seq.to_be_bytes().iter());
         nonce_ct_mac.extend(ciphertext.iter());
         let om = OpaqueMessage {
             typ: m.typ,
@@ -562,7 +612,11 @@ impl Decrypter {
         }
     }
 
-    fn decrypt_aes128gcm(&self, m: &OpaqueMessage, seq: u64) -> Result<PlainMessage, BackendError> {
+    fn decrypt_aes128gcm(
+        &mut self,
+        m: &OpaqueMessage,
+        seq: u64,
+    ) -> Result<PlainMessage, BackendError> {
         // TODO tls-client shouldnt call decrypt with CCS
         if m.typ == ContentType::ChangeCipherSpec {
             return Ok(PlainMessage {

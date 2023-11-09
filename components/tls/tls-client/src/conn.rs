@@ -4,7 +4,6 @@ use crate::{
     backend::{Backend, RustCryptoBackend},
     client::ClientConnectionData,
     error::Error,
-    record_layer,
     vecbuf::ChunkVecBuffer,
 };
 use async_trait::async_trait;
@@ -15,6 +14,7 @@ use std::{
     io, mem,
     ops::{Deref, DerefMut},
 };
+use tls_backend::BackendError;
 use tls_core::{
     msgs::{
         alert::AlertMessagePayload,
@@ -386,7 +386,8 @@ impl ConnectionCommon {
         }
 
         // Decrypt if demanded by current state.
-        let msg = match self.common_state.record_layer.is_decrypting() {
+        let is_decrypting = self.common_state.backend.is_decrypting();
+        let msg = match is_decrypting {
             true => match self.common_state.decrypt_incoming(msg).await {
                 Ok(None) => {
                     // message dropped
@@ -403,9 +404,6 @@ impl ConnectionCommon {
         // For handshake messages, we need to join them before parsing
         // and processing.
         if self.handshake_joiner.want_message(&msg) {
-            // First decryptable handshake message concludes trial decryption
-            self.common_state.record_layer.finish_trial_decryption();
-
             match self.handshake_joiner.take_message(msg) {
                 Some(_) => {}
                 None => {
@@ -464,10 +462,10 @@ impl ConnectionCommon {
         }
 
         while let Some(msg) = self.message_deframer.frames.pop_front() {
-            self.backend.buffer_ciphertext(msg).await?;
+            self.backend.buffer_incoming(msg).await?;
         }
 
-        while let Some(msg) = self.backend.remove_ciphertext().await? {
+        while let Some(msg) = self.backend.next_incoming().await? {
             match self.process_msg(msg, state).await {
                 Ok(new) => state = new,
                 Err(e) => {
@@ -606,7 +604,6 @@ impl DerefMut for ConnectionCommon {
 pub struct CommonState {
     pub(crate) negotiated_version: Option<ProtocolVersion>,
     pub(crate) side: Side,
-    pub(crate) record_layer: record_layer::RecordLayer,
     pub(crate) backend: Box<dyn Backend>,
     pub(crate) suite: Option<SupportedCipherSuite>,
     pub(crate) alpn_protocol: Option<Vec<u8>>,
@@ -639,7 +636,6 @@ impl CommonState {
         Ok(Self {
             negotiated_version: None,
             side,
-            record_layer: record_layer::RecordLayer::new(),
             backend,
             suite: None,
             alpn_protocol: None,
@@ -793,32 +789,19 @@ impl CommonState {
         &mut self,
         encr: OpaqueMessage,
     ) -> Result<Option<PlainMessage>, Error> {
-        if self.record_layer.wants_close_before_decrypt() {
+        if self.backend.wants_close_before_decrypt() {
             self.send_close_notify().await?;
         }
 
-        let encrypted_len = encr.payload.0.len();
-        let plain = self
-            .record_layer
-            .decrypt_incoming(self.backend.as_mut(), encr)
-            .await;
+        let plain = self.backend.decrypt(encr).await;
 
         match plain {
-            Err(Error::PeerSentOversizedRecord) => {
-                self.send_fatal_alert(AlertDescription::RecordOverflow)
-                    .await?;
-                Err(Error::PeerSentOversizedRecord)
-            }
-            Err(Error::DecryptError) if self.record_layer.doing_trial_decryption(encrypted_len) => {
-                trace!("Dropping undecryptable message after aborted early_data");
-                Ok(None)
-            }
-            Err(Error::DecryptError) => {
+            Err(BackendError::DecryptionError(_)) => {
                 self.send_fatal_alert(AlertDescription::BadRecordMac)
                     .await?;
                 Err(Error::DecryptError)
             }
-            Err(e) => Err(e),
+            Err(e) => Err(e.into()),
             Ok(plain) => Ok(Some(plain)),
         }
     }
@@ -831,7 +814,7 @@ impl CommonState {
 
         // Close connection once we start to run out of
         // sequence space.
-        if self.record_layer.wants_close_before_encrypt() {
+        if self.backend.wants_close_before_encrypt() {
             debug!("Sending warning alert {:?}", AlertDescription::CloseNotify);
             let m = Message::build_alert(AlertLevel::Warning, AlertDescription::CloseNotify);
             self.send_single_fragment(m.into()).await?;
@@ -874,14 +857,11 @@ impl CommonState {
     async fn send_single_fragment(&mut self, m: PlainMessage) -> Result<(), Error> {
         // Refuse to wrap counter at all costs.  This
         // is basically untestable unfortunately.
-        if self.record_layer.encrypt_exhausted() {
+        if self.backend.encrypt_exhausted() {
             return Err(Error::EncryptError);
         }
 
-        let em = self
-            .record_layer
-            .encrypt_outgoing(self.backend.as_mut(), m)
-            .await?;
+        let em = self.backend.encrypt(m).await?;
         self.queue_tls_message(em);
         Ok(())
     }
@@ -927,7 +907,7 @@ impl CommonState {
             return Ok(len);
         }
 
-        debug_assert!(self.record_layer.is_encrypting());
+        debug_assert!(self.backend.is_encrypting());
 
         if data.is_empty() {
             // Don't send empty fragments.
@@ -1066,7 +1046,8 @@ impl CommonState {
         warn!("Sending fatal alert {:?}", desc);
         debug_assert!(!self.sent_fatal_alert);
         let m = Message::build_alert(AlertLevel::Fatal, desc);
-        self.send_msg(m, self.record_layer.is_encrypting()).await?;
+        let is_encrypting = self.backend.is_encrypting();
+        self.send_msg(m, is_encrypting).await?;
         self.sent_fatal_alert = true;
         Ok(())
     }
@@ -1082,7 +1063,8 @@ impl CommonState {
 
     async fn send_warning_alert_no_log(&mut self, desc: AlertDescription) -> Result<(), Error> {
         let m = Message::build_alert(AlertLevel::Warning, desc);
-        self.send_msg(m, self.record_layer.is_encrypting()).await
+        let is_encrypting = self.backend.is_encrypting();
+        self.send_msg(m, is_encrypting).await
     }
 
     pub(crate) fn set_max_fragment_size(&mut self, new: Option<usize>) -> Result<(), Error> {

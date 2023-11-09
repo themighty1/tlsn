@@ -326,7 +326,7 @@ impl State<ClientConnectionData> for ExpectEncryptedExtensions {
 
             if was_early_traffic && !cx.common.early_traffic {
                 // If no early traffic, set the encryption key for handshakes
-                cx.common.record_layer.set_message_encrypter();
+                cx.common.backend.prepare_encryption().await?;
             }
 
             cx.common.peer_certificates = Some(resuming_session.server_cert_chain().to_vec());

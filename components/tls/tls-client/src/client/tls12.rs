@@ -864,9 +864,8 @@ impl State<ClientConnectionData> for ExpectServerDone {
             .set_server_key_share(server_key_share)
             .await?;
         cx.common.backend.prepare_encryption().await?;
-        cx.common.record_layer.prepare_message_encrypter();
-        cx.common.record_layer.prepare_message_decrypter();
-        cx.common.record_layer.start_encrypting();
+        cx.common.backend.prepare_decryption().await?;
+        cx.common.backend.start_encrypting();
 
         st.config
             .key_log
@@ -987,7 +986,8 @@ impl State<ClientConnectionData> for ExpectCcs {
         cx.common.check_aligned_handshake().await?;
 
         // nb. msgs layer validates trivial contents of CCS
-        cx.common.record_layer.start_decrypting();
+        cx.common.backend.prepare_decryption().await?;
+        cx.common.backend.start_decrypting();
 
         Ok(Box::new(ExpectFinished {
             config: self.config,
@@ -1112,7 +1112,7 @@ impl State<ClientConnectionData> for ExpectFinished {
 
         if st.resuming {
             emit_ccs(cx.common).await?;
-            cx.common.record_layer.start_encrypting();
+            cx.common.backend.prepare_encryption().await?;
             emit_finished(&expect_verify_data, &mut st.transcript, cx.common).await?;
         }
 

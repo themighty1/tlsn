@@ -67,7 +67,7 @@ struct ConnectionState {
     sent_bytes: usize,
     recv_bytes: usize,
 
-    ciphertext_buffer: HashMap<u64, OpaqueMessage>,
+    ciphertext_buffer: VecDeque<OpaqueMessage>,
 }
 
 impl Default for ConnectionState {
@@ -307,25 +307,23 @@ impl MpcTlsLeader {
     }
 
     /// Buffers and commits to a received ciphertext.
-    pub async fn buffer_encrypted(
-        &mut self,
-        m: OpaqueMessage,
-        seq: u64,
-    ) -> Result<(), MpcTlsError> {
-        let mut payload = m.payload.0.clone();
+    pub async fn buffer_incoming(&mut self, m: OpaqueMessage) -> Result<(), MpcTlsError> {
+        if let ContentType::ApplicationData = m.typ {
+            let mut payload = m.payload.0.clone();
 
-        let explicit_nonce: Vec<u8> = payload.drain(..8).collect();
-        let ciphertext = payload;
+            let explicit_nonce: Vec<u8> = payload.drain(..8).collect();
+            let ciphertext = payload;
 
-        self.channel
-            .send(MpcTlsMessage::CommitMessage(CommitMessage {
-                typ: m.typ,
-                explicit_nonce,
-                ciphertext,
-            }))
-            .await?;
+            self.channel
+                .send(MpcTlsMessage::CommitMessage(CommitMessage {
+                    typ: m.typ,
+                    explicit_nonce,
+                    ciphertext,
+                }))
+                .await?;
+        }
 
-        self.conn_state.ciphertext_buffer.push_back(m);
+        self.conn_state.ciphertext_buffer.push_front(m);
 
         Ok(())
     }
@@ -431,9 +429,7 @@ impl MpcTlsLeader {
 
         let typ: ContentType = m.typ;
 
-        self.channel
-            .send(MpcTlsMessage::DecryptMessage(DecryptMessage))
-            .await?;
+        self.channel.send(MpcTlsMessage::DecryptMessage).await?;
 
         // Set the transcript id depending on the type of message
         match m.typ {
@@ -478,6 +474,34 @@ impl Backend for MpcTlsLeader {
 
     fn as_any_mut(&mut self) -> &mut dyn Any {
         self
+    }
+
+    fn is_encrypting(&self) -> bool {
+        todo!()
+    }
+
+    fn is_decrypting(&self) -> bool {
+        todo!()
+    }
+
+    fn start_encrypting(&mut self) {
+        todo!()
+    }
+
+    fn start_decrypting(&mut self) {
+        todo!()
+    }
+
+    fn wants_close_before_decrypt(&self) -> bool {
+        todo!()
+    }
+
+    fn wants_close_before_encrypt(&self) -> bool {
+        todo!()
+    }
+
+    fn encrypt_exhausted(&self) -> bool {
+        todo!()
     }
 
     async fn set_protocol_version(&mut self, version: ProtocolVersion) -> Result<(), BackendError> {
@@ -563,37 +587,25 @@ impl Backend for MpcTlsLeader {
             .map_err(|e| BackendError::InternalError(e.to_string()))
     }
 
-    async fn buffer_ciphertext(
-        &mut self,
-        msg: OpaqueMessage,
-        seq: u64,
-    ) -> Result<(), BackendError> {
-        self.buffer_encrypted(msg)
+    async fn prepare_decryption(&mut self) -> Result<(), BackendError> {
+        todo!()
+    }
+
+    async fn buffer_incoming(&mut self, msg: OpaqueMessage) -> Result<(), BackendError> {
+        self.buffer_incoming(msg)
             .await
             .map_err(|e| BackendError::InternalError(e.to_string()))
     }
 
-    async fn remove_ciphertext(&mut self, seq: u64) -> Result<Option<OpaqueMessage>, BackendError> {
-        Ok(self.conn_state.ciphertext_buffer.pop_front())
+    async fn next_incoming(&mut self) -> Result<Option<OpaqueMessage>, BackendError> {
+        Ok(self.conn_state.ciphertext_buffer.pop_back())
     }
 
-    async fn encrypt(
-        &mut self,
-        msg: PlainMessage,
-        seq: u64,
-    ) -> Result<OpaqueMessage, BackendError> {
-        self.encrypt(msg, seq)
-            .map_err(|e| BackendError::EncryptionError(e.to_string()))
-            .await
+    async fn encrypt(&mut self, msg: PlainMessage) -> Result<OpaqueMessage, BackendError> {
+        todo!()
     }
 
-    async fn decrypt(
-        &mut self,
-        msg: OpaqueMessage,
-        seq: u64,
-    ) -> Result<PlainMessage, BackendError> {
-        self.decrypt(msg, seq)
-            .map_err(|e| BackendError::DecryptionError(e.to_string()))
-            .await
+    async fn decrypt(&mut self, msg: OpaqueMessage) -> Result<PlainMessage, BackendError> {
+        todo!()
     }
 }

@@ -51,3 +51,12 @@ pub enum MpcTlsError {
     #[error("leader closed the connection abruptly")]
     LeaderClosedAbruptly,
 }
+
+impl From<crate::msg::MpcTlsMessageError> for MpcTlsError {
+    fn from(err: crate::msg::MpcTlsMessageError) -> Self {
+        MpcTlsError::IOError(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("received {}, expected {}", err.actual(), err.expected()),
+        ))
+    }
+}

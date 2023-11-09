@@ -322,7 +322,6 @@ mod hash_hs;
 mod limited_cache;
 mod msgs;
 mod rand;
-mod record_layer;
 //mod stream;
 mod vecbuf;
 pub(crate) use tls_core::verify;

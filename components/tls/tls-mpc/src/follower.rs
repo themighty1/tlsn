@@ -22,7 +22,7 @@ use tls_core::{
         enums::{AlertDescription, AlertLevel, ContentType, NamedGroup, ProtocolVersion},
     },
 };
-use utils_aio::expect_msg_or_err;
+use utils_aio::stream::ExpectStreamExt;
 
 use crate::{
     msg::{CommitMessage, DecryptMessage, EncryptMessage, MpcTlsMessage},
@@ -133,8 +133,11 @@ impl MpcTlsFollower {
             .await?;
 
         if self.config.common().handshake_commit() {
-            let handshake_commitment =
-                expect_msg_or_err!(self.channel, MpcTlsMessage::HandshakeCommitment)?;
+            let handshake_commitment = self
+                .channel
+                .expect_next()
+                .await?
+                .try_into_handshake_commitment()?;
 
             self.handshake_commitment = Some(handshake_commitment);
         }
@@ -162,8 +165,11 @@ impl MpcTlsFollower {
     async fn run_client_finished(&mut self) -> Result<(), MpcTlsError> {
         self.prf.compute_client_finished_vd_blind().await?;
 
-        let EncryptMessage { typ, seq, len } =
-            expect_msg_or_err!(self.channel, MpcTlsMessage::EncryptMessage)?;
+        let EncryptMessage { typ, seq, len } = self
+            .channel
+            .expect_next()
+            .await?
+            .try_into_encrypt_message()?;
 
         if typ != ContentType::Handshake {
             return Err(MpcTlsError::UnexpectedContentType(typ));
@@ -179,19 +185,23 @@ impl MpcTlsFollower {
         tracing::instrument(level = "trace", skip(self), err)
     )]
     async fn run_server_finished(&mut self) -> Result<(), MpcTlsError> {
-        let DecryptMessage {
+        self.channel
+            .expect_next()
+            .await?
+            .try_into_decrypt_message()?;
+
+        let CommitMessage {
             typ,
             explicit_nonce,
             ciphertext,
-            seq,
-        } = expect_msg_or_err!(self.channel, MpcTlsMessage::DecryptMessage)?;
+        } = self.committed_msgs.pop_back().unwrap();
 
         if typ != ContentType::Handshake {
             return Err(MpcTlsError::UnexpectedContentType(typ));
         }
 
         self.decrypter
-            .decrypt_blind(typ, explicit_nonce, ciphertext, seq)
+            .decrypt_blind(typ, explicit_nonce, ciphertext)
             .await?;
 
         self.prf.compute_server_finished_vd_blind().await?;
@@ -223,7 +233,6 @@ impl MpcTlsFollower {
             typ,
             explicit_nonce,
             ciphertext,
-            seq,
         }) = self.committed_msgs.pop_front()
         else {
             todo!()
@@ -241,13 +250,13 @@ impl MpcTlsFollower {
         match typ {
             ContentType::ApplicationData => {
                 self.decrypter
-                    .decrypt_blind(typ, explicit_nonce, ciphertext, seq)
+                    .decrypt_blind(typ, explicit_nonce, ciphertext)
                     .await
             }
             ContentType::Alert => {
                 let bytes = self
                     .decrypter
-                    .decrypt_public(typ, explicit_nonce, ciphertext, seq)
+                    .decrypt_public(typ, explicit_nonce, ciphertext)
                     .await?;
 
                 let alert = AlertMessagePayload::read_bytes(&bytes)
@@ -400,16 +409,18 @@ impl Decrypter {
         typ: ContentType,
         explicit_nonce: Vec<u8>,
         ciphertext: Vec<u8>,
-        seq: u64,
     ) -> Result<(), MpcTlsError> {
         let len = ciphertext.len() - 16;
+        let seq = self.seq;
 
-        self.prepare_decrypt(typ, seq, len)?;
+        self.prepare_decrypt(typ, len)?;
 
         let aad = make_tls12_aad(seq, typ, ProtocolVersion::TLSv1_2, len);
         self.aead
             .decrypt_blind(explicit_nonce, ciphertext, aad.to_vec())
             .await?;
+
+        self.seq += 1;
 
         Ok(())
     }
@@ -423,11 +434,11 @@ impl Decrypter {
         typ: ContentType,
         explicit_nonce: Vec<u8>,
         ciphertext: Vec<u8>,
-        seq: u64,
     ) -> Result<Vec<u8>, MpcTlsError> {
         let len = ciphertext.len() - 16;
+        let seq = self.seq;
 
-        self.prepare_decrypt(typ, seq, len)?;
+        self.prepare_decrypt(typ, len)?;
 
         let aad = make_tls12_aad(seq, typ, ProtocolVersion::TLSv1_2, len);
         let plaintext = self
@@ -435,15 +446,12 @@ impl Decrypter {
             .decrypt_public(explicit_nonce, ciphertext, aad.to_vec())
             .await?;
 
+        self.seq += 1;
+
         Ok(plaintext)
     }
 
-    fn prepare_decrypt(
-        &mut self,
-        typ: ContentType,
-        seq: u64,
-        len: usize,
-    ) -> Result<(), MpcTlsError> {
+    fn prepare_decrypt(&mut self, typ: ContentType, len: usize) -> Result<(), MpcTlsError> {
         // Set the transcript id depending on the type of message
         match typ {
             ContentType::ApplicationData => {
@@ -452,12 +460,6 @@ impl Decrypter {
             }
             _ => self.aead.set_transcript_id(&self.opaque_transcript_id),
         }
-
-        if seq != self.seq {
-            return Err(MpcTlsError::UnexpectedSequenceNumber(seq));
-        }
-
-        self.seq += 1;
 
         Ok(())
     }

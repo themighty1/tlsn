@@ -1,5 +1,6 @@
 //! Contains message types for communication between leader and follower
 
+use enum_try_as_inner::EnumTryAsInner;
 use mpz_core::hash::Hash;
 use serde::{Deserialize, Serialize};
 use tls_core::msgs::enums::ContentType;
@@ -19,7 +20,7 @@ pub enum ContentTypeDef {
 
 /// MPC protocol level message types
 #[allow(missing_docs)]
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, EnumTryAsInner, Serialize, Deserialize)]
 pub enum MpcTlsMessage {
     HandshakeCommitment(Hash),
     CommitMessage(CommitMessage),
@@ -37,7 +38,6 @@ pub struct CommitMessage {
     pub typ: ContentType,
     pub explicit_nonce: Vec<u8>,
     pub ciphertext: Vec<u8>,
-    pub seq: u64,
 }
 
 /// Encrypt a message
