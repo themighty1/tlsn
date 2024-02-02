@@ -1,0 +1,34 @@
+[package]
+name = "authdecode"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "authdecode"
+
+[dependencies]
+thiserror.workspace = true
+num.workspace = true
+rand.workspace = true
+aes.workspace = true
+cipher.workspace = true
+rand_chacha.workspace = true
+sha2 = { workspace = true, features = ["compress"] }
+opaque-debug.workspace = true
+mpz-core = { git = "https://github.com/privacy-scaling-explorations/mpz", commit = "499b75d20397235f8399817a53c65fa2d399d3b8"}
+
+#dependencies for halo2
+halo2_proofs = { git = "https://github.com/zcash/halo2", version = "0.3", default-features = false}
+halo2_gadgets = { git = "https://github.com/zcash/halo2", version = "0.3"}
+pasta_curves = "0.5"
+group = "0.13"
+ff = "0.13"
+
+[dev-dependencies]
+hex.workspace = true
+num-bigint = { workspace = true, features = ["rand"] }
+criterion.workspace = true
+
+[[bench]]
+name = "halo2_proof_generation"
+harness = false
