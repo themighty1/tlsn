@@ -1,7 +1,5 @@
 use crate::{
-    label::{LabelGenerator, Seed},
     prover::prover::CommitmentDetails,
-    utils::{compute_zero_sum_and_deltas, encrypt_arithmetic_labels, sanitize_biguint},
     verifier::{backend::Backend, error::VerifierError, state},
     Delta, LabelSumHash, PlaintextHash, Proof, ZeroSum,
 };
@@ -35,7 +33,9 @@ impl Verifier<state::Initialized> {
     }
 
     // TODO CommitmentDetails must be converted into their public form before sending
-    // Return the data needed by the prover to check GC and OT
+    //
+    /// Receives the commitments and returns the data needed by the prover to check the authenticity
+    /// of the encodings.
     pub fn receive_commitments(
         self,
         commitments: Vec<CommitmentDetails>,
@@ -60,8 +60,8 @@ impl Verifier<state::Initialized> {
 }
 
 impl Verifier<state::CommitmentReceived> {
-    /// Verify proofs corresponding to the commitments received earlier.
-    /// The ordering of `proofs` and `encoding_pairs` must match.
+    /// Verifies proofs corresponding to the commitments received earlier.
+    /// The ordering of `proofs` and `self.state.encoding_pairs_sets` must match.
     pub fn verify(
         self,
         // Zk proofs. Their ordering corresponds to the ordering of the commitments.

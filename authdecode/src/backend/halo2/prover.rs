@@ -263,7 +263,7 @@ fn commit(
 mod tests {
     use super::*;
     use crate::{
-        halo2_backend::{
+        backend::halo2::{
             circuit::{CELLS_PER_ROW, K},
             utils::bigint_to_256bits,
             Curve,

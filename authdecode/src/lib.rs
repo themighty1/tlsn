@@ -23,13 +23,12 @@
 //!
 //! See ../authdecode_diagram.pdf for a diagram of the whole protocol
 
-pub mod halo2_backend;
-mod label;
+pub mod backend;
 pub mod prover;
-mod utils;
+pub mod utils;
 pub mod verifier;
 
-use crate::prover::prover::ProofInput;
+use crate::{backend::halo2::onetimesetup, prover::prover::ProofInput};
 use num::{BigInt, BigUint};
 
 /// Before hashing a [Chunk], it is salted by shifting its last element to the

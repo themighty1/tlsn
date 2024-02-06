@@ -1,6 +1,4 @@
 use crate::{Delta, ZeroSum};
-use aes::{Aes128, NewBlockCipher};
-use cipher::{consts::U16, generic_array::GenericArray, BlockEncrypt};
 use num::{BigInt, BigUint};
 use sha2::{Digest, Sha256};
 
@@ -90,65 +88,6 @@ pub fn sha256(data: &[u8]) -> [u8; 32] {
     let mut hasher = Sha256::new();
     hasher.update(data);
     hasher.finalize().into()
-}
-
-/// Encrypts each arithmetic label using a corresponding binary label as a key
-/// and returns ciphertexts in an order based on binary label's pointer bit (LSB).
-pub fn encrypt_arithmetic_labels(
-    alabels: &Vec<[BigUint; 2]>,
-    blabels: &Vec<[u128; 2]>,
-) -> Result<Vec<[[u8; 16]; 2]>, String> {
-    if alabels.len() > blabels.len() {
-        return Err("error".to_string());
-    }
-
-    Ok(blabels
-        .iter()
-        .zip(alabels)
-        .map(|(bin_pair, arithm_pair)| {
-            // safe to unwrap() since to_be_bytes() always returns exactly 16
-            // bytes for u128
-            let zero_key = Aes128::new_from_slice(&bin_pair[0].to_be_bytes()).unwrap();
-            let one_key = Aes128::new_from_slice(&bin_pair[1].to_be_bytes()).unwrap();
-
-            let mut label0 = [0u8; 16];
-            let mut label1 = [0u8; 16];
-            let ap0 = arithm_pair[0].to_bytes_be();
-            let ap1 = arithm_pair[1].to_bytes_be();
-            // pad with zeroes on the left
-            label0[16 - ap0.len()..].copy_from_slice(&ap0);
-            label1[16 - ap1.len()..].copy_from_slice(&ap1);
-
-            let mut label0: GenericArray<u8, U16> = GenericArray::from(label0);
-            let mut label1: GenericArray<u8, U16> = GenericArray::from(label1);
-            zero_key.encrypt_block(&mut label0);
-            one_key.encrypt_block(&mut label1);
-            // place encrypted arithmetic labels based on the pointer bit of
-            // binary label 0
-            if (bin_pair[0] & 1) == 0 {
-                [label0.into(), label1.into()]
-            } else {
-                [label1.into(), label0.into()]
-            }
-        })
-        .collect())
-}
-#[test]
-fn test_encrypt_arithmetic_labels() {
-    let alabels: [BigUint; 2] = [3u8.into(), 4u8.into()];
-    let blabels = [0u128, 1u128];
-    let res = encrypt_arithmetic_labels(&vec![alabels], &vec![blabels]).unwrap();
-    let flat = res[0].into_iter().flatten().collect::<Vec<_>>();
-
-    // expected value generated with python3:
-    // from Crypto.Cipher import AES
-    // k0 = AES.new((0).to_bytes(16, 'big'), AES.MODE_ECB)
-    // ct0 = k0.encrypt((3).to_bytes(16, 'big')).hex()
-    // k1 = AES.new((1).to_bytes(16, 'big'), AES.MODE_ECB)
-    // ct1 = k1.encrypt((4).to_bytes(16, 'big')).hex()
-    // print(ct0+ct1)
-    let expected = "f795aaab494b5923f7fd89ff948bc1e0382fa171550467b34c54c58b9d3cfd24";
-    assert_eq!(hex::encode(&flat), expected);
 }
 
 /// Returns the sum of all zero labels and deltas for each label pair.

@@ -1,12 +1,8 @@
-use authdecode::{
-    halo2_backend::{
-        onetimesetup::OneTimeSetup,
-        prover::{Prover, PK},
-        verifier::{Verifier, VK},
-        Curve,
-    },
-    prover::{ProofCreation, Prover},
-    verifier::{AuthDecodeVerifier, VerifyMany},
+use authdecode::halo2_backend::{
+    onetimesetup::OneTimeSetup,
+    prover::{Prover, PK},
+    verifier::{Verifier, VK},
+    Curve,
 };
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use rand::{thread_rng, Rng};

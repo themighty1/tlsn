@@ -1,5 +1,3 @@
-use crate::halo2_backend::prover;
-
 #[derive(Debug, PartialEq, Eq, thiserror::Error)]
 pub enum ProverError {
     #[error("Provided empty plaintext")]
