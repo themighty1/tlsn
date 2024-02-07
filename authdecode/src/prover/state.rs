@@ -1,6 +1,7 @@
 //! AuthDecode prover states.
 
 use crate::{
+    encodings::FullEncodings,
     prover::{
         backend::Backend,
         prover::{ChunkCommitmentDetails, CommitmentDetails},
@@ -24,7 +25,8 @@ opaque_debug::implement!(Committed);
 pub struct Checked {
     pub commitments: Vec<CommitmentDetails>,
     /// Authenticated encodings, uncorrelated and truncated.
-    pub encoding_pairs: Vec<[u128; 2]>,
+    /// Each set corresponds to each commitment
+    pub full_encodings_sets: Vec<FullEncodings>,
 }
 
 opaque_debug::implement!(Checked);

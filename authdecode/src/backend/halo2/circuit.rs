@@ -67,13 +67,19 @@ pub const CELLS_PER_ROW: usize = 64;
 /// (cs.blinding_factors() + 1)
 pub const USEFUL_ROWS: usize = 58;
 
-/// The size of the salt of the hash in bits.
+/// The bitsize of the salt used to create a commitment to the plaintext.
 ///
 /// We don't use the usual 128 bits, because it is convenient to put two 64-bit
 /// limbs of plaintext into the field element (which has 253 useful bits, see
 /// [super::USEFUL_BITS]) and use the remaining 125 bits of the field element
 /// for the salt (see [crate::Salt]).
-pub const SALT_SIZE: usize = 125;
+pub const PLAINTEXT_SALT_SIZE: usize = 125;
+
+/// The bitsize of the salt used to create a commitment to the encoding sum.
+///
+/// TODO this should be changed to be 128 bits, but it requires circuit modifications,
+/// so keeping as 125 for now.
+pub const ENCODING_SUM_SALT_SIZE: usize = 125;
 
 type F = pallas::Base;
 
@@ -348,7 +354,10 @@ impl Circuit<F> for AuthDecodeCircuit {
         meta.create_gate("add salt", |meta| {
             let cell = meta.query_advice(cfg.scratch_space[0], Rotation::cur());
             let salt = meta.query_advice(cfg.scratch_space[1], Rotation::cur());
-            let sum = cell * pow_2_x[SALT_SIZE].clone() + salt;
+
+            // TODO: since plaintext salt and encoding_sum salt are potentially of different sizes,
+            // we need 2 differents gates "add plaintext salt" and "add encoding sum salt"
+            let sum = cell * pow_2_x[PLAINTEXT_SALT_SIZE].clone() + salt;
 
             // constrain to match the expected value
             let expected = meta.query_advice(cfg.scratch_space[4], Rotation::cur());
@@ -679,7 +688,10 @@ impl AuthDecodeCircuit {
 
         // compute the expected sum and put it into the 5th cell
         let two = BigUint::from(2u8);
-        let pow_2_salt = biguint_to_f(&two.pow(SALT_SIZE as u32));
+
+        // TODO: revisit this since plaintext and encoding_sum salts are of different sizes
+
+        let pow_2_salt = biguint_to_f(&two.pow(PLAINTEXT_SALT_SIZE as u32));
         let sum = cell.value() * Value::known(pow_2_salt) + salt.value();
         let assigned_sum =
             region.assign_advice(|| "", config.scratch_space[4], row_offset, || sum)?;

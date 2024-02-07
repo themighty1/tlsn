@@ -1,9 +1,10 @@
 use crate::{
-    prover::prover::CommitmentDetails,
+    prover::{prover::CommitmentDetails, VerificationData},
     verifier::{backend::Backend, error::VerifierError, state},
-    Delta, LabelSumHash, PlaintextHash, Proof, ZeroSum,
+    Delta, Proof,
 };
 
+use crate::prover::ToInitData;
 use mpz_core::utils::blake3;
 use num::{BigInt, BigUint};
 use std::ops::Shr;
@@ -11,9 +12,9 @@ use std::ops::Shr;
 /// Public inputs and a zk proof that needs to be verified.
 #[derive(Default, Clone)]
 pub struct VerificationInput {
-    pub plaintext_hash: PlaintextHash,
-    pub label_sum_hash: LabelSumHash,
-    pub sum_of_zero_labels: ZeroSum,
+    pub plaintext_hash: BigUint,
+    pub encoding_sum_hash: BigUint,
+    pub zero_sum: BigUint,
     pub deltas: Vec<Delta>,
 }
 
@@ -41,19 +42,27 @@ impl Verifier<state::Initialized> {
         commitments: Vec<CommitmentDetails>,
         // A set of encodings for each commitment
         encoding_pairs_sets: Vec<Vec<[u128; 2]>>,
-    ) -> Result<Verifier<state::CommitmentReceived>, VerifierError> {
+        // initialization data to be sent to the prover to initialize the encoding verifier
+        init_data: impl ToInitData + 'static,
+    ) -> Result<(Verifier<state::CommitmentReceived>, VerificationData), VerifierError> {
         if commitments.len() != encoding_pairs_sets.len() {
             // TODO proper error, count mismatch
             return Err(VerifierError::InternalError);
         }
 
-        Ok(Verifier {
-            backend: self.backend,
-            state: state::CommitmentReceived {
-                commitments,
-                encoding_pairs_sets,
+        Ok((
+            Verifier {
+                backend: self.backend,
+                state: state::CommitmentReceived {
+                    commitments,
+                    encoding_pairs_sets: encoding_pairs_sets.clone(),
+                },
             },
-        })
+            VerificationData {
+                full_encodings_sets: encoding_pairs_sets,
+                init_data: Box::new(init_data),
+            },
+        ))
 
         // TODO return GC/OT randomness to the Prover
     }
@@ -111,7 +120,7 @@ impl Verifier<state::CommitmentReceived> {
                     chunk.0.clone(),
                     chunk.1.clone(),
                     com.plaintext_hash.clone(),
-                    com.encodings_sum_hash.clone(),
+                    com.encoding_sum_hash.clone(),
                 )
             })
             .collect::<Vec<_>>();
@@ -188,8 +197,8 @@ impl Verifier<state::CommitmentReceived> {
 
         VerificationInput {
             plaintext_hash: pt_hash,
-            label_sum_hash: enc_hash,
-            sum_of_zero_labels: zero_sum,
+            encoding_sum_hash: enc_hash,
+            zero_sum,
             deltas,
         }
     }

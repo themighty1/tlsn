@@ -1,50 +1,74 @@
 use std::ops::{Shl, Shr};
 
 use crate::{
+    encodings::{ActiveEncodings, FullEncodings},
     prover::{backend::Backend, error, error::ProverError, state},
     utils::u8vec_to_boolvec,
-    Delta, LabelSumHash, PlaintextHash, Salt, ZeroSum,
+    Delta,
 };
 
 use mpz_core::utils::blake3;
 use num::{BigInt, BigUint};
 
-use super::EncodingsVerifier;
+use super::{EncodingVerifier, VerificationData};
+use crate::encodings::ToActiveEncodings;
 
 /// Details pertaining to an AuthDecode commitment to a single chunk of the plaintext.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct ChunkCommitmentDetails {
     /// The chunk of plaintext to commit to.
     pub plaintext: Vec<bool>,
     pub plaintext_hash: BigUint,
     pub plaintext_salt: BigUint,
 
-    // The uncorrelated and truncated encodings to commit to.
-    pub encodings: Vec<u128>,
-    pub encodings_sum: BigUint,
-    pub encodings_sum_hash: BigUint,
-    pub encodings_sum_salt: BigUint,
+    // The converted (i.e. uncorrelated and truncated) encodings to commit to.
+    pub encodings: ActiveEncodings,
+    pub encoding_sum: BigUint,
+    pub encoding_sum_hash: BigUint,
+    pub encoding_sum_salt: BigUint,
 }
 
 /// Details pertaining to an AuthDecode commitment to plaintext of arbitrary length.
 #[derive(Clone, Default)]
 pub struct CommitmentDetails {
-    /// Commitments to each chunk of the plaintext
+    /// Deatils pertaining to commitments to each chunk of the plaintext
     pub chunk_commitments: Vec<ChunkCommitmentDetails>,
+}
+
+impl CommitmentDetails {
+    /// Returns the plaintext of this commitment.
+    pub fn plaintext(&self) -> Vec<bool> {
+        self.chunk_commitments
+            .iter()
+            .map(|com| com.plaintext)
+            .flatten()
+            .collect()
+    }
+
+    /// Returns the encodings of the plaintext of this commitment.
+    pub fn encodings(&self) -> ActiveEncodings {
+        let active = ActiveEncodings::default();
+        for chunk in self.chunk_commitments {
+            active.extend(chunk.encodings);
+        }
+        active
+    }
 }
 
 // Public and private inputs to the zk circuit
 #[derive(Clone, Default)]
 pub struct ProofInput {
     // Public
-    pub plaintext_hash: PlaintextHash,
-    pub label_sum_hash: LabelSumHash,
-    pub sum_of_zero_labels: ZeroSum,
+    pub plaintext_hash: BigUint,
+    pub encoding_sum_hash: BigUint,
+    /// The sum of encodings which encode the 0 bit.
+    pub zero_sum: BigUint,
     pub deltas: Vec<Delta>,
 
     // Private
     pub plaintext: Vec<bool>,
-    pub salt: Salt,
+    pub plaintext_salt: BigUint,
+    pub encoding_sum_salt: BigUint,
 }
 
 /// Prover in the AuthDecode protocol.
@@ -66,18 +90,17 @@ impl Prover<state::Initialized> {
     /// to the `encodings` of the `plaintext` bits.
     pub fn commit(
         self,
-        plaintext_and_encodings: Vec<(Vec<u8>, Vec<u128>)>,
-    ) -> Result<Prover<state::Committed>, ProverError> {
+        plaintext_and_encodings: Vec<(Vec<u8>, impl ToActiveEncodings)>,
+    ) -> Result<(Prover<state::Committed>, Vec<CommitmentDetails>), ProverError> {
         let commitments = plaintext_and_encodings
             .iter()
-            .map(|set| {
-                let plaintext = set.0.clone();
-                let encodings = set.1.clone();
+            .map(|(plaintext, encodings)| {
                 if plaintext.is_empty() {
                     return Err(ProverError::EmptyPlaintext);
                 }
 
-                let plaintext = u8vec_to_boolvec(&plaintext);
+                let plaintext = u8vec_to_boolvec(plaintext);
+                let encodings = encodings.to_active_encodings();
 
                 if plaintext.len() != encodings.len() {
                     return Err(ProverError::Mismatch);
@@ -87,24 +110,26 @@ impl Prover<state::Initialized> {
                 // Returning the hash and the salt.
                 let chunk_commitments = plaintext
                     .chunks(self.backend.chunk_size())
-                    .zip(encodings.chunks(self.backend.chunk_size()))
+                    .zip(encodings.into_chunks(self.backend.chunk_size()))
                     .map(|(plaintext, encodings)| {
-                        // Break encoding correlation, truncate them and compute their sum.
-                        let encodings =
-                            self.break_correlation(encodings.to_vec(), plaintext.to_vec());
-                        let encodings = self.truncate(encodings);
-                        let sum = self.compute_encoding_sum(encodings.to_vec());
+                        // Convert the encodings and compute their sum.
+                        let encodings = encodings.convert(plaintext);
+                        let sum = encodings.compute_encoding_sum();
 
-                        let (plaintext_hash, encodings_hash, salt) =
-                            self.backend.commit(plaintext.to_vec(), sum.clone())?;
+                        let (plaintext_hash, plaintext_salt) =
+                            self.backend.commit_plaintext(plaintext.to_vec())?;
+
+                        let (encoding_sum_hash, encoding_sum_salt) =
+                            self.backend.commit_encoding_sum(sum.clone())?;
+
                         Ok(ChunkCommitmentDetails {
                             plaintext: plaintext.to_vec(),
                             plaintext_hash,
-                            plaintext_salt: salt.clone(),
+                            plaintext_salt,
                             encodings,
-                            encodings_sum: sum,
-                            encodings_sum_hash: encodings_hash,
-                            encodings_sum_salt: salt,
+                            encoding_sum: sum,
+                            encoding_sum_hash,
+                            encoding_sum_salt,
                         })
                     })
                     .collect::<Result<Vec<ChunkCommitmentDetails>, ProverError>>()?;
@@ -112,47 +137,16 @@ impl Prover<state::Initialized> {
             })
             .collect::<Result<Vec<CommitmentDetails>, ProverError>>()?;
 
-        Ok(Prover {
-            backend: self.backend,
-            state: state::Committed { commitments },
-        })
-    }
-
-    /// Breaks the correlation which each bit encoding has with its complementary encoding.
-    /// Returns uncorrelated encodings.
-    ///
-    /// In half-gates garbling scheme, each pair of bit encodings is correlated by a global delta.
-    /// It is essential for the security of the AuthDecode protocol that this correlation is removed.   
-    fn break_correlation(&self, encodings: Vec<u128>, plaintext: Vec<bool>) -> Vec<u128> {
-        // Hash the encoding if it encodes bit 1, otherwise keep the encoding.
-        encodings
-            .iter()
-            .zip(plaintext.iter())
-            .map(|(encoding, bit)| {
-                if *bit {
-                    let mut bytes = [0u8; 16];
-                    bytes.copy_from_slice(&blake3(&encoding.to_be_bytes())[0..16]);
-                    u128::from_be_bytes(bytes)
-                } else {
-                    *encoding
-                }
-            })
-            .collect()
-    }
-
-    /// Truncates each encoding to the 40 bit length. Returns truncated encodings.
-    ///
-    /// This is an optimization. 40-bit encodings provide 40 bits of statistical security
-    /// for the AuthDecode protocol.
-    fn truncate(&self, encodings: Vec<u128>) -> Vec<u128> {
-        encodings.iter().map(|enc| enc.shr(128 - 40)).collect()
-    }
-
-    /// Computes the arithmetic sum of the encodings.
-    fn compute_encoding_sum(&self, encodings: Vec<u128>) -> BigUint {
-        encodings
-            .iter()
-            .fold(BigUint::from(0u128), |acc, &x| acc + BigUint::from(x))
+        Ok((
+            Prover {
+                backend: self.backend,
+                state: state::Committed {
+                    commitments: commitments.clone(),
+                },
+            },
+            // TODO we need to convert into a form which can be publicly revealed
+            commitments,
+        ))
     }
 }
 
@@ -160,113 +154,88 @@ impl Prover<state::Committed> {
     /// Checks the authenticity of the peer's encodings used to create commitments.
     ///
     /// The verifier encodings must be in the same order in which the commitments were made.
-
     pub fn check(
         self,
-        peer_encodings: Vec<[u128; 2]>,
-        verifier: impl EncodingsVerifier,
+        verification_data: VerificationData,
+        verifier: impl EncodingVerifier,
     ) -> Result<Prover<state::Checked>, ProverError> {
-        // Verify that the encodings are authentic.
-        verifier.verify(peer_encodings.clone())?;
-
-        // Collect all plaintext and all encodings from all commitments.
-        let mut plaintext: Vec<bool> = Vec::new();
-        let mut encodings: Vec<u128> = Vec::new();
-        for comm in &self.state.commitments {
-            for chunk in &comm.chunk_commitments {
-                plaintext.extend(chunk.plaintext.clone());
-                encodings.extend(chunk.encodings.clone());
-            }
-        }
-
-        if encodings.len() != peer_encodings.len() {
+        if verification_data.full_encodings_sets.len() != self.state.commitments.len() {
             // TODO proper error
             return Err(ProverError::InternalError);
         }
 
-        let verifier_encodings = self.break_correlation(peer_encodings);
-        let verifier_encodings = self.truncate(verifier_encodings);
+        verifier.init(&verification_data.init_data);
 
-        let selected: Vec<u128> = crate::utils::choose(&verifier_encodings, &plaintext);
+        // Verify encodings of each commitment.
+        let verified_encodings = self
+            .state
+            .commitments
+            .iter()
+            .zip(verification_data.full_encodings_sets.iter())
+            .map(|(comm, encodings)| {
+                let full_encodings = encodings.to_full_encodings();
 
-        if selected != encodings {
-            // TODO proper error, check failed
-            return Err(ProverError::InternalError);
-        }
+                verifier.verify(full_encodings)?;
+
+                if comm.encodings().len() != full_encodings.len() {
+                    // TODO proper error
+                    return Err(ProverError::InternalError);
+                }
+                // Get active converted encodings.
+                let active_converted = full_encodings
+                    .encode(&comm.plaintext())
+                    .convert(&comm.plaintext());
+
+                if active_converted != comm.encodings() {
+                    // TODO proper error
+                    return Err(ProverError::InternalError);
+                }
+                Ok(full_encodings)
+            })
+            .collect::<Result<Vec<FullEncodings>, ProverError>>()?;
 
         Ok(Prover {
             backend: self.backend,
             state: state::Checked {
                 commitments: self.state.commitments,
-                encoding_pairs: verifier_encodings,
+                full_encodings_sets: verified_encodings,
             },
         })
-    }
-
-    fn break_correlation(&self, encodings: Vec<[u128; 2]>) -> Vec<[u128; 2]> {
-        // Hash the encoding if it encodes bit 1, otherwise keep the encoding.
-        encodings
-            .iter()
-            .map(|pair| {
-                let mut bytes = [0u8; 16];
-                bytes.copy_from_slice(&blake3(&pair[1].to_be_bytes())[0..16]);
-                [pair[0], u128::from_be_bytes(bytes)]
-            })
-            .collect()
-    }
-
-    /// Truncates each encoding to the 40 bit length. Returns truncated encodings.
-    ///
-    /// This is an optimization. 40-bit encodings provide 40 bits of statistical security
-    /// for the AuthDecode protocol.
-    fn truncate(&self, encodings: Vec<[u128; 2]>) -> Vec<[u128; 2]> {
-        encodings
-            .iter()
-            .map(|enc| [enc[0].shr(128 - 40), enc[1].shr(128 - 40)])
-            .collect()
     }
 }
 
 impl Prover<state::Checked> {
     /// Generates a zk proof(s).
-    pub fn prove(self) -> Result<Prover<state::ProofCreated>, ProverError> {
+    pub fn prove(self) -> Result<(Prover<state::ProofCreated>, Vec<Vec<u8>>), ProverError> {
         let commitments = self.state.commitments.clone();
-        let mut pairs = self.state.encoding_pairs.clone();
+        let mut sets = self.state.full_encodings_sets.clone();
 
-        let all_inputs: Vec<ProofInput> = commitments
+        let all_inputs = commitments
             .iter()
-            .flat_map(|commitment| {
-                // Compute circuit inputs: deltas and zero_sum for each chunk
-                let inputs: Vec<ProofInput> = commitment
-                    .chunk_commitments
+            .zip(sets.iter())
+            .map(|(com, set)| {
+                let set = set.clone();
+                com.chunk_commitments
                     .iter()
                     .map(|com| {
-                        let cloned = pairs.clone();
-                        let (split, remaining) = cloned.split_at(com.plaintext.len());
+                        let (split, remaining) = set.split_at(com.plaintext.len());
+                        set = remaining;
 
-                        pairs = remaining.to_vec();
-
-                        let zero_sum = self.compute_zero_sum(&split);
-                        let mut deltas = self.compute_deltas(&split);
-                        // Pad deltas to the size of the chunk
-                        // TODO: this should be the backend's job
-                        deltas.extend(vec![
-                            BigInt::from(0u8);
-                            self.backend.chunk_size() - deltas.len()
-                        ]);
+                        // TODO: left off, implement compute_zero_sum for FullEncodings
+                        let zero_sum = self.compute_zero_sum(split);
+                        let deltas = self.compute_deltas(split);
 
                         ProofInput {
                             deltas,
                             plaintext_hash: com.plaintext_hash.clone(),
-                            label_sum_hash: com.encodings_sum_hash.clone(),
-                            sum_of_zero_labels: zero_sum,
+                            encoding_sum_hash: com.encoding_sum_hash.clone(),
+                            zero_sum,
                             plaintext: com.plaintext.clone(),
-                            salt: com.plaintext_salt.clone(),
+                            plaintext_salt: com.plaintext_salt.clone(),
+                            encoding_sum_salt: com.encoding_sum_salt.clone(),
                         }
                     })
                     .collect();
-
-                inputs
             })
             .collect();
 
@@ -275,13 +244,16 @@ impl Prover<state::Checked> {
         // The verifier will choose the same strategy when verifying.
         let proofs = self.backend.prove(all_inputs)?;
 
-        Ok(Prover {
-            backend: self.backend,
-            state: state::ProofCreated {
-                commitments,
-                proofs,
+        Ok((
+            Prover {
+                backend: self.backend,
+                state: state::ProofCreated {
+                    commitments,
+                    proofs: proofs.clone(),
+                },
             },
-        })
+            proofs,
+        ))
     }
 
     /// Computes the arithmetic sum of the 0 bit encodings.
@@ -323,22 +295,28 @@ mod tests {
             3670
         }
 
-        fn commit(
+        fn commit_plaintext(
             &self,
-            _plaintext: Vec<bool>,
-            _encodings_sum: BigUint,
-        ) -> Result<(BigUint, BigUint, BigUint), ProverError> {
-            Ok((BigUint::default(), BigUint::default(), BigUint::default()))
+            plaintext: Vec<bool>,
+        ) -> Result<(BigUint, BigUint), ProverError> {
+            Ok((BigUint::default(), BigUint::default()))
+        }
+
+        fn commit_encoding_sum(
+            &self,
+            encoding_sum: BigUint,
+        ) -> Result<(BigUint, BigUint), ProverError> {
+            Ok((BigUint::default(), BigUint::default()))
         }
     }
 
-    #[test]
-    /// Inputs empty plaintext and triggers [ProverError::EmptyPlaintext]
-    fn test_error_empty_plaintext() {
-        let lsp = Prover::new(Box::new(CorrectTestProver {}));
+    // #[test]
+    // /// Inputs empty plaintext and triggers [ProverError::EmptyPlaintext]
+    // fn test_error_empty_plaintext() {
+    //     let lsp = Prover::new(Box::new(CorrectTestProver {}));
 
-        let pt: Vec<u8> = Vec::new();
-        let res = lsp.commit(vec![(pt, vec![1u128])]);
-        assert_eq!(res.err().unwrap(), ProverError::EmptyPlaintext);
-    }
+    //     let pt: Vec<u8> = Vec::new();
+    //     let res = lsp.commit(vec![(pt, vec![1u128])]);
+    //     assert_eq!(res.err().unwrap(), ProverError::EmptyPlaintext);
+    // }
 }

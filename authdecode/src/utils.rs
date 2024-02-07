@@ -1,4 +1,4 @@
-use crate::{Delta, ZeroSum};
+use crate::Delta;
 use num::{BigInt, BigUint};
 use sha2::{Digest, Sha256};
 
@@ -93,9 +93,9 @@ pub fn sha256(data: &[u8]) -> [u8; 32] {
 /// Returns the sum of all zero labels and deltas for each label pair.
 pub fn compute_zero_sum_and_deltas(
     arithmetic_label_pairs: &[[BigUint; 2]],
-) -> (ZeroSum, Vec<Delta>) {
+) -> (BigUint, Vec<Delta>) {
     let mut deltas: Vec<Delta> = Vec::with_capacity(arithmetic_label_pairs.len());
-    let mut zero_sum: ZeroSum = 0u8.into();
+    let mut zero_sum: BigUint = 0u8.into();
     for label_pair in arithmetic_label_pairs {
         // calculate the sum of all zero labels
         zero_sum += label_pair[0].clone();

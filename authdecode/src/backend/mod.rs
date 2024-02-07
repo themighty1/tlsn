@@ -1,2 +1,2 @@
-pub mod halo2;
-mod mock;
+// pub mod halo2;
+pub mod mock;

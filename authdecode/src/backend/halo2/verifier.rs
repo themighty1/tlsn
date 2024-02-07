@@ -74,8 +74,8 @@ impl Backend for Verifier {
         // add another column with public inputs
         let tmp = &[
             biguint_to_f(&input.plaintext_hash),
-            biguint_to_f(&input.label_sum_hash),
-            biguint_to_f(&input.sum_of_zero_labels),
+            biguint_to_f(&input.encoding_sum_hash),
+            biguint_to_f(&input.zero_sum),
         ];
         all_inputs.push(tmp);
 

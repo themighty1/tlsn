@@ -33,5 +33,5 @@ pub enum ProverError {
     #[error("An internal error was encountered")]
     InternalError,
     #[error(transparent)]
-    EncodingsVerifierError(#[from] crate::prover::EncodingsVerifierError),
+    EncodingsVerifierError(#[from] crate::prover::EncodingVerifierError),
 }

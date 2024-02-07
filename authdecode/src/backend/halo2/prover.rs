@@ -1,5 +1,7 @@
 use super::{
-    circuit::{AuthDecodeCircuit, SALT_SIZE, TOTAL_FIELD_ELEMENTS},
+    circuit::{
+        AuthDecodeCircuit, ENCODING_SUM_SALT_SIZE, PLAINTEXT_SALT_SIZE, TOTAL_FIELD_ELEMENTS,
+    },
     poseidon::{poseidon_1, poseidon_15},
     utils::{biguint_to_f, deltas_to_matrices, f_to_biguint},
     CHUNK_SIZE, USEFUL_BITS,
@@ -53,12 +55,15 @@ impl Backend for Prover {
         CHUNK_SIZE
     }
 
-    fn commit(
+    fn commit_plaintext(&self, plaintext: Vec<bool>) -> Result<(BigUint, BigUint), ProverError> {
+        commit_plaintext(plaintext)
+    }
+
+    fn commit_encoding_sum(
         &self,
-        plaintext: Vec<bool>,
-        encodings_sum: BigUint,
-    ) -> Result<(BigUint, BigUint, BigUint), ProverError> {
-        commit(plaintext, encodings_sum)
+        encoding_sum: BigUint,
+    ) -> Result<(BigUint, BigUint), ProverError> {
+        commit_encoding_sum(encoding_sum)
     }
 
     fn prove(&self, inputs: Vec<ProofInput>) -> Result<Vec<Proof>, ProverError> {
@@ -78,11 +83,11 @@ impl Backend for Prover {
                     .collect::<Vec<_>>();
                 ProofInputHalo2 {
                     deltas: input.deltas.clone(),
-                    label_sum_hash: input.label_sum_hash.clone(),
+                    label_sum_hash: input.encoding_sum_hash.clone(),
                     plaintext_hash: input.plaintext_hash.clone(),
-                    sum_of_zero_labels: input.sum_of_zero_labels.clone(),
+                    sum_of_zero_labels: input.zero_sum.clone(),
                     plaintext,
-                    salt: input.salt.clone(),
+                    salt: input.plaintext_salt.clone(),
                 }
             })
             .collect::<Vec<_>>();
@@ -197,11 +202,7 @@ fn hash_internal(inputs: &[BigUint]) -> Result<BigUint, ProverError> {
     Ok(f_to_biguint(&digest))
 }
 
-fn commit(
-    plaintext: Vec<bool>,
-    encodings_sum: BigUint,
-) -> Result<(BigUint, BigUint, BigUint), ProverError> {
-    let mut plaintext = plaintext.clone();
+fn commit_plaintext(mut plaintext: Vec<bool>) -> Result<(BigUint, BigUint), ProverError> {
     if plaintext.len() > CHUNK_SIZE {
         // TODO proper error
         return Err(ProverError::InternalError);
@@ -213,7 +214,7 @@ fn commit(
     // Generate random salt and add it to the plaintext.
     let mut rng = thread_rng();
     let salt: Vec<bool> = core::iter::repeat_with(|| rng.gen::<bool>())
-        .take(SALT_SIZE)
+        .take(PLAINTEXT_SALT_SIZE)
         .collect::<Vec<_>>();
 
     plaintext.extend(salt.clone());
@@ -223,41 +224,39 @@ fn commit(
 
     let pt_digest = hash_internal(&field_elements)?;
 
+    Ok((pt_digest, bits_to_biguint(&salt)))
+}
+
+fn commit_encoding_sum(encoding_sum: BigUint) -> Result<(BigUint, BigUint), ProverError> {
+    // Generate random salt
+    let mut rng = thread_rng();
+    let salt: Vec<bool> = core::iter::repeat_with(|| rng.gen::<bool>())
+        .take(ENCODING_SUM_SALT_SIZE)
+        .collect::<Vec<_>>();
+
     // Commit to encodings
 
-    let enc_sum_bits = u8vec_to_boolvec(&encodings_sum.to_bytes_be());
+    let enc_sum_bits = u8vec_to_boolvec(&encoding_sum.to_bytes_be());
 
-    if (enc_sum_bits.len() + SALT_SIZE) > USEFUL_BITS {
+    if (enc_sum_bits.len() + ENCODING_SUM_SALT_SIZE) > USEFUL_BITS {
         // TODO proper error, no room for salt
         return Err(ProverError::InternalError);
     }
 
     // Pack sum and salt into a single field element.
     // The high 128 bits are for the sum, the low 125 bits are for the salt.
+
+    // TODO: need to change this so that the high 125 bits are for the sum, the low
+    // 128 bits are for the salt.
+
     let mut field_element = vec![false; USEFUL_BITS];
     field_element[128 - enc_sum_bits.len()..128].copy_from_slice(&enc_sum_bits);
-    field_element[USEFUL_BITS - SALT_SIZE..].copy_from_slice(&salt);
+    field_element[USEFUL_BITS - ENCODING_SUM_SALT_SIZE..].copy_from_slice(&salt);
 
     let enc_digest = hash_internal(&[bits_to_biguint(&field_element)])?;
 
-    Ok((pt_digest, enc_digest, bits_to_biguint(&salt)))
+    Ok((enc_digest, bits_to_biguint(&salt)))
 }
-
-/// Puts salt into the low bits of the last field element of the chunk.
-/// Returns the salted chunk.
-// fn salt_chunk(&self, chunk: &Chunk, salt: &Salt) -> Result<Chunk, ProverError> {
-//     let len = chunk.len();
-//     let last_fe = chunk[len - 1].clone();
-
-//     if last_fe.bits() as usize > self.prover.useful_bits() - self.prover.salt_size() {
-//         // can only happen if there is a logic error in this code
-//         return Err(ProverError::WrongLastFieldElementBitCount);
-//     }
-
-//     let mut salted_chunk = chunk.clone();
-//     salted_chunk[len - 1] = last_fe.shl(self.prover.salt_size()) + salt;
-//     Ok(salted_chunk)
-// }
 
 #[cfg(test)]
 mod tests {
@@ -300,11 +299,11 @@ mod tests {
                         .collect::<Vec<_>>();
                     ProofInputHalo2 {
                         deltas: input.deltas.clone(),
-                        label_sum_hash: input.label_sum_hash.clone(),
+                        label_sum_hash: input.encoding_sum_hash.clone(),
                         plaintext_hash: input.plaintext_hash.clone(),
-                        sum_of_zero_labels: input.sum_of_zero_labels.clone(),
+                        sum_of_zero_labels: input.zero_sum.clone(),
                         plaintext,
-                        salt: input.salt.clone(),
+                        salt: input.plaintext_salt.clone(),
                     }
                 })
                 .collect::<Vec<_>>();
@@ -414,12 +413,18 @@ mod tests {
             CHUNK_SIZE
         }
 
-        fn commit(
+        fn commit_plaintext(
             &self,
             plaintext: Vec<bool>,
-            encodings_sum: BigUint,
-        ) -> Result<(BigUint, BigUint, BigUint), ProverError> {
-            commit(plaintext, encodings_sum)
+        ) -> Result<(BigUint, BigUint), ProverError> {
+            commit_plaintext(plaintext)
+        }
+
+        fn commit_encoding_sum(
+            &self,
+            encoding_sum: BigUint,
+        ) -> Result<(BigUint, BigUint), ProverError> {
+            commit_encoding_sum(encoding_sum)
         }
     }
 
