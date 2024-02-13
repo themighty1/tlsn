@@ -49,7 +49,7 @@ struct ProofProperties {
 mod tests {
     use crate::{
         backend::mock::{MockProverBackend, MockVerifierBackend},
-        encodings::{ActiveEncodings, Encoding, ToActiveEncodings},
+        encodings::{ActiveEncodings, Encoding, FullEncodings, ToActiveEncodings},
         prover::{
             backend::Backend as ProverBackend,
             error::ProverError,
@@ -60,6 +60,7 @@ mod tests {
         verifier::verifier::Verifier,
         Proof,
     };
+    use hex::encode;
     use num::BigUint;
     use rand::{Rng, SeedableRng};
     use rand_chacha::ChaCha12Rng;
@@ -70,21 +71,13 @@ mod tests {
     // A dummy encodings verifier.
     struct DummyEncodingsVerifier {}
     impl crate::prover::EncodingVerifier for DummyEncodingsVerifier {
-        fn init(&self, init_data: impl ToInitData) {}
+        fn init(&self, init_data: InitData) {}
 
         fn verify(
             &self,
-            _encodings: Vec<[u128; 2]>,
+            _encodings: &FullEncodings,
         ) -> Result<(), crate::prover::EncodingVerifierError> {
             Ok(())
-        }
-    }
-
-    // Dummy initialization data for the encoding verifier.
-    struct DummyInitData {}
-    impl ToInitData for DummyInitData {
-        fn to_init_data(&self) -> InitData {
-            InitData::new(vec![0u8])
         }
     }
 
@@ -101,38 +94,31 @@ mod tests {
         let full_encodings: Vec<[u128; 2]> = core::iter::repeat_with(|| rng.gen::<[u128; 2]>())
             .take(PLAINTEXT_SIZE * 8)
             .collect();
+        let full_encodings = full_encodings
+            .into_iter()
+            .map(|pair| {
+                [
+                    Encoding::new(BigUint::from(pair[0])),
+                    Encoding::new(BigUint::from(pair[1])),
+                ]
+            })
+            .collect::<Vec<_>>();
+        let full_encodings = FullEncodings::new(full_encodings);
 
         // Prover's active encodings.
-        let active_encodings = choose(&full_encodings, &u8vec_to_boolvec(&plaintext));
-        pub struct ActiveEncodingsProvider(Vec<u128>);
-        impl ActiveEncodingsProvider {
-            pub fn new(encodings: Vec<u128>) -> Self {
-                Self(encodings)
-            }
-        }
-        impl ToActiveEncodings for ActiveEncodingsProvider {
-            fn to_active_encodings(&self) -> crate::encodings::ActiveEncodings {
-                let encodings = self
-                    .0
-                    .iter()
-                    .map(|x| Encoding::new(BigUint::from(*x)))
-                    .collect::<Vec<_>>();
-                ActiveEncodings::new(encodings)
-            }
-        }
+        let active_encodings = full_encodings.encode(&u8vec_to_boolvec(&plaintext));
 
         let prover = Prover::new(Box::new(MockProverBackend::new()));
         let verifier = Verifier::new(Box::new(MockVerifierBackend::new()));
 
-        let (prover, commitments) = prover
-            .commit(vec![(
-                plaintext,
-                ActiveEncodingsProvider::new(active_encodings),
-            )])
-            .unwrap();
+        let (prover, commitments) = prover.commit(vec![(plaintext, active_encodings)]).unwrap();
 
         let (verifier, verification_data) = verifier
-            .receive_commitments(commitments, vec![full_encodings.clone()], DummyInitData {})
+            .receive_commitments(
+                commitments,
+                vec![full_encodings.clone()],
+                InitData::new(vec![1u8; 100]),
+            )
             .unwrap();
 
         let prover = prover

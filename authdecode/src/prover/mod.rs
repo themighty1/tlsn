@@ -6,8 +6,8 @@ use crate::encodings::{FullEncodings, ToFullEncodings};
 
 pub struct VerificationData {
     /// One set corresponds to one commitment.
-    pub full_encodings_sets: Vec<Box<dyn ToFullEncodings>>,
-    pub init_data: Box<dyn ToInitData>,
+    pub full_encodings_sets: Vec<FullEncodings>,
+    pub init_data: InitData,
 }
 
 pub struct InitData(Vec<u8>);
@@ -36,8 +36,8 @@ pub enum EncodingVerifierError {
 pub trait EncodingVerifier {
     /// Initializes the verifier with initialization data and prepares it to verify
     /// encodings.
-    fn init(&self, init_data: impl ToInitData);
+    fn init(&self, init_data: InitData);
 
     /// Verifies the authenticity of the provided full encodings.
-    fn verify(&self, encodings: FullEncodings) -> Result<(), EncodingVerifierError>;
+    fn verify(&self, encodings: &FullEncodings) -> Result<(), EncodingVerifierError>;
 }

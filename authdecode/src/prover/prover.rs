@@ -31,7 +31,7 @@ pub struct ChunkCommitmentDetails {
 /// Details pertaining to an AuthDecode commitment to plaintext of arbitrary length.
 #[derive(Clone, Default)]
 pub struct CommitmentDetails {
-    /// Deatils pertaining to commitments to each chunk of the plaintext
+    /// Details pertaining to commitments to each chunk of the plaintext.
     pub chunk_commitments: Vec<ChunkCommitmentDetails>,
 }
 
@@ -40,15 +40,15 @@ impl CommitmentDetails {
     pub fn plaintext(&self) -> Vec<bool> {
         self.chunk_commitments
             .iter()
-            .map(|com| com.plaintext)
+            .map(|com| com.plaintext.clone())
             .flatten()
             .collect()
     }
 
     /// Returns the encodings of the plaintext of this commitment.
     pub fn encodings(&self) -> ActiveEncodings {
-        let active = ActiveEncodings::default();
-        for chunk in self.chunk_commitments {
+        let mut active = ActiveEncodings::default();
+        for chunk in self.chunk_commitments.clone() {
             active.extend(chunk.encodings);
         }
         active
@@ -86,11 +86,10 @@ impl Prover<state::Initialized> {
         }
     }
 
-    /// Creates a commitment to (potentially multiple sets of) the `plaintext` and a commitment
-    /// to the `encodings` of the `plaintext` bits.
+    /// Creates a commitment to each (`plaintext`, `encodings` of the `plaintext` bits) tuple.
     pub fn commit(
         self,
-        plaintext_and_encodings: Vec<(Vec<u8>, impl ToActiveEncodings)>,
+        plaintext_and_encodings: Vec<(Vec<u8>, ActiveEncodings)>,
     ) -> Result<(Prover<state::Committed>, Vec<CommitmentDetails>), ProverError> {
         let commitments = plaintext_and_encodings
             .iter()
@@ -100,17 +99,15 @@ impl Prover<state::Initialized> {
                 }
 
                 let plaintext = u8vec_to_boolvec(plaintext);
-                let encodings = encodings.to_active_encodings();
 
                 if plaintext.len() != encodings.len() {
                     return Err(ProverError::Mismatch);
                 }
 
                 // Chunk up the plaintext and encodings and commit to them.
-                // Returning the hash and the salt.
                 let chunk_commitments = plaintext
                     .chunks(self.backend.chunk_size())
-                    .zip(encodings.into_chunks(self.backend.chunk_size()))
+                    .zip(encodings.clone().into_chunks(self.backend.chunk_size()))
                     .map(|(plaintext, encodings)| {
                         // Convert the encodings and compute their sum.
                         let encodings = encodings.convert(plaintext);
@@ -156,6 +153,7 @@ impl Prover<state::Committed> {
     /// The verifier encodings must be in the same order in which the commitments were made.
     pub fn check(
         self,
+        // TODO: the verifier should only pass init data
         verification_data: VerificationData,
         verifier: impl EncodingVerifier,
     ) -> Result<Prover<state::Checked>, ProverError> {
@@ -164,7 +162,7 @@ impl Prover<state::Committed> {
             return Err(ProverError::InternalError);
         }
 
-        verifier.init(&verification_data.init_data);
+        verifier.init(verification_data.init_data);
 
         // Verify encodings of each commitment.
         let verified_encodings = self
@@ -172,25 +170,23 @@ impl Prover<state::Committed> {
             .commitments
             .iter()
             .zip(verification_data.full_encodings_sets.iter())
-            .map(|(comm, encodings)| {
-                let full_encodings = encodings.to_full_encodings();
-
+            .map(|(com, full_encodings)| {
                 verifier.verify(full_encodings)?;
 
-                if comm.encodings().len() != full_encodings.len() {
+                if com.encodings().len() != full_encodings.len() {
                     // TODO proper error
                     return Err(ProverError::InternalError);
                 }
                 // Get active converted encodings.
                 let active_converted = full_encodings
-                    .encode(&comm.plaintext())
-                    .convert(&comm.plaintext());
+                    .encode(&com.plaintext())
+                    .convert(&com.plaintext());
 
-                if active_converted != comm.encodings() {
+                if active_converted != com.encodings() {
                     // TODO proper error
                     return Err(ProverError::InternalError);
                 }
-                Ok(full_encodings)
+                Ok(full_encodings.clone())
             })
             .collect::<Result<Vec<FullEncodings>, ProverError>>()?;
 
@@ -210,38 +206,32 @@ impl Prover<state::Checked> {
         let commitments = self.state.commitments.clone();
         let mut sets = self.state.full_encodings_sets.clone();
 
+        // Collect proof inputs to prove each chunk of plaintext committed to.
         let all_inputs = commitments
             .iter()
             .zip(sets.iter())
-            .map(|(com, set)| {
-                let set = set.clone();
+            .flat_map(|(com, set)| {
+                let mut set = set.clone();
                 com.chunk_commitments
                     .iter()
                     .map(|com| {
                         let (split, remaining) = set.split_at(com.plaintext.len());
                         set = remaining;
 
-                        // TODO: left off, implement compute_zero_sum for FullEncodings
-                        let zero_sum = self.compute_zero_sum(split);
-                        let deltas = self.compute_deltas(split);
-
                         ProofInput {
-                            deltas,
+                            deltas: split.compute_deltas(),
                             plaintext_hash: com.plaintext_hash.clone(),
                             encoding_sum_hash: com.encoding_sum_hash.clone(),
-                            zero_sum,
+                            zero_sum: split.compute_zero_sum(),
                             plaintext: com.plaintext.clone(),
                             plaintext_salt: com.plaintext_salt.clone(),
                             encoding_sum_salt: com.encoding_sum_salt.clone(),
                         }
                     })
-                    .collect();
+                    .collect::<Vec<_>>()
             })
-            .collect();
+            .collect::<Vec<_>>();
 
-        // Call prove on all chunks at the same time, let the backend decide on the
-        // strategy for the circuit composition.
-        // The verifier will choose the same strategy when verifying.
         let proofs = self.backend.prove(all_inputs)?;
 
         Ok((
@@ -254,21 +244,6 @@ impl Prover<state::Checked> {
             },
             proofs,
         ))
-    }
-
-    /// Computes the arithmetic sum of the 0 bit encodings.
-    fn compute_zero_sum(&self, encodings: &[[u128; 2]]) -> BigUint {
-        encodings
-            .iter()
-            .fold(BigUint::from(0u128), |acc, &x| acc + BigUint::from(x[0]))
-    }
-
-    /// Computes the arithmetic difference between a pair of encodings.
-    fn compute_deltas(&self, encodings: &[[u128; 2]]) -> Vec<BigInt> {
-        encodings
-            .iter()
-            .map(|pair| BigInt::from(pair[1]) - BigInt::from(pair[0]))
-            .collect()
     }
 }
 

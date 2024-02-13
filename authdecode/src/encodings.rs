@@ -1,8 +1,8 @@
 use mpz_core::utils::blake3;
-use num::{traits::ToBytes, BigUint};
+use num::{traits::ToBytes, BigInt, BigUint};
 use std::slice::Chunks;
 
-/// Statistical security parameter of the AuthDecode protocol.
+/// Statistical security parameter.
 pub const SSP: usize = 40;
 
 /// The state of the encoding.
@@ -46,7 +46,7 @@ impl Encoding {
     /// # Panics
     ///
     /// Panics it the encoding is not in the `Original` state.
-    fn break_correlation(self, bit: bool) -> Self {
+    fn break_correlation(&self, bit: bool) -> Self {
         assert!(self.state == EncodingState::Original);
 
         // Hash the encoding if it encodes bit 1, otherwise keep the encoding.
@@ -59,7 +59,7 @@ impl Encoding {
             }
         } else {
             Self {
-                value: self.value,
+                value: self.value.clone(),
                 state: EncodingState::Uncorrelated,
             }
         }
@@ -88,6 +88,10 @@ impl Encoding {
             state: EncodingState::Converted,
         }
     }
+
+    pub fn value(&self) -> BigUint {
+        self.value.clone()
+    }
 }
 
 /// Active encodings.
@@ -109,7 +113,7 @@ impl ActiveEncodings {
         self.0.chunks(chunk_size)
     }
 
-    pub fn extend(mut self, other: ActiveEncodings) {
+    pub fn extend(&mut self, other: ActiveEncodings) {
         self.0.extend(other.0)
     }
 
@@ -133,9 +137,9 @@ impl ActiveEncodings {
     ///
     /// Panics if any of the encodings has not yet been converted.
     pub fn compute_encoding_sum(&self) -> BigUint {
-        self.0.iter().fold(BigUint::from(0u128), |acc, &x| {
-            assert!(x.state == EncodingState::Uncorrelated);
-            acc + x.value
+        self.0.iter().fold(BigUint::from(0u128), |acc, x| {
+            assert!(x.state == EncodingState::Converted);
+            acc + x.value()
         })
     }
 
@@ -165,8 +169,9 @@ impl Iterator for ActiveEncodingsChunks {
         let encodings = if remaining <= self.chunk_size {
             std::mem::take(&mut self.encodings)
         } else {
+            // TODO use iter() with take
             let new_after_split = self.encodings.split_off(self.chunk_size);
-            let split = self.encodings;
+            let split = self.encodings.clone();
             self.encodings = new_after_split;
             split
         };
@@ -187,6 +192,10 @@ pub struct FullEncodings(Vec<[Encoding; 2]>);
 // TODO we need to add state here as well
 
 impl FullEncodings {
+    pub fn new(encodings: Vec<[Encoding; 2]>) -> Self {
+        Self(encodings)
+    }
+
     /// Returns the number of pairs of full encodings.
     pub fn len(&self) -> usize {
         self.0.len()
@@ -198,13 +207,14 @@ impl FullEncodings {
     }
 
     pub fn convert(self) -> Self {
-        // TODO add state and check that no prev conversion happened
+        // TODO add state and check that no prev. conversion happened
         let converted = self
             .0
             .iter()
-            .map(|pair| [pair[0].convert(false), pair[0].convert(true)])
+            .map(|pair| [pair[0].convert(false), pair[1].convert(true)])
             .collect::<Vec<_>>();
         Self(converted)
+        // TODO modify in-place instead
     }
 
     /// Returns an iterator ... TODO
@@ -235,24 +245,31 @@ impl FullEncodings {
             .0
             .iter()
             .zip(bits.iter())
-            .map(
-                |(enc_pair, bit)| {
-                    if *bit {
-                        enc_pair[1]
-                    } else {
-                        enc_pair[0]
-                    }
-                },
-            )
+            .map(|(enc_pair, bit)| {
+                if *bit {
+                    enc_pair[1].clone()
+                } else {
+                    enc_pair[0].clone()
+                }
+            })
             .collect::<Vec<_>>();
 
         ActiveEncodings::new(active)
     }
-}
 
-impl ToFullEncodings for Box<dyn ToFullEncodings> {
-    fn to_full_encodings(&self) -> FullEncodings {
-        self.as_ref().to_full_encodings()
+    /// Computes the arithmetic sum of the 0 bit encodings.
+    pub fn compute_zero_sum(&self) -> BigUint {
+        self.0
+            .iter()
+            .fold(BigUint::from(0u8), |acc, x| acc + x[0].value())
+    }
+
+    /// Computes the arithmetic difference between a pair of encodings.
+    pub fn compute_deltas(&self) -> Vec<BigInt> {
+        self.0
+            .iter()
+            .map(|pair| BigInt::from(pair[1].value()) - BigInt::from(pair[0].value()))
+            .collect()
     }
 }
 
@@ -274,7 +291,7 @@ impl Iterator for FullEncodingsChunks {
             std::mem::take(&mut self.encodings)
         } else {
             let new_after_split = self.encodings.split_off(self.chunk_size);
-            let split = self.encodings;
+            let split = self.encodings.clone();
             self.encodings = new_after_split;
             split
         };

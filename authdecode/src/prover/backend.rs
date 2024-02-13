@@ -10,7 +10,7 @@ pub trait Backend {
 
     /// Creates a commitment to the encoding sum.
     ///
-    /// Returns the commitment the salt used to create the commitment.
+    /// Returns the commitment and the salt used to create the commitment.
     fn commit_encoding_sum(&self, encoding_sum: BigUint)
         -> Result<(BigUint, BigUint), ProverError>;
 

@@ -1,5 +1,6 @@
 use crate::{
-    prover::{prover::CommitmentDetails, VerificationData},
+    encodings::FullEncodings,
+    prover::{prover::CommitmentDetails, InitData, VerificationData},
     verifier::{backend::Backend, error::VerifierError, state},
     Delta, Proof,
 };
@@ -40,12 +41,12 @@ impl Verifier<state::Initialized> {
     pub fn receive_commitments(
         self,
         commitments: Vec<CommitmentDetails>,
-        // A set of encodings for each commitment
-        encoding_pairs_sets: Vec<Vec<[u128; 2]>>,
+        // Full encodings for each commitment.
+        full_encodings_sets: Vec<FullEncodings>,
         // initialization data to be sent to the prover to initialize the encoding verifier
-        init_data: impl ToInitData + 'static,
+        init_data: InitData,
     ) -> Result<(Verifier<state::CommitmentReceived>, VerificationData), VerifierError> {
-        if commitments.len() != encoding_pairs_sets.len() {
+        if commitments.len() != full_encodings_sets.len() {
             // TODO proper error, count mismatch
             return Err(VerifierError::InternalError);
         }
@@ -55,12 +56,13 @@ impl Verifier<state::Initialized> {
                 backend: self.backend,
                 state: state::CommitmentReceived {
                     commitments,
-                    encoding_pairs_sets: encoding_pairs_sets.clone(),
+                    full_encodings_sets: full_encodings_sets.clone(),
                 },
             },
             VerificationData {
-                full_encodings_sets: encoding_pairs_sets,
-                init_data: Box::new(init_data),
+                // TODO passing encodings is unnecessary
+                full_encodings_sets,
+                init_data,
             },
         ))
 
@@ -76,27 +78,17 @@ impl Verifier<state::CommitmentReceived> {
         // Zk proofs. Their ordering corresponds to the ordering of the commitments.
         proof_sets: Vec<Proof>,
     ) -> Result<Verifier<state::VerifiedSuccessfully>, VerifierError> {
-        // Collect deltas and zero_sums for each chunk
-        let chunk_data = self
+        // Get encodings for each chunk
+        let chunk_encodings = self
             .state
-            .encoding_pairs_sets
+            .full_encodings_sets
             .iter()
-            .map(|set| {
-                set.chunks(self.backend.chunk_size())
-                    .map(|chunk| {
-                        // For each chunk compute the PublicInputs
-                        let encodings = self.break_correlation(chunk.to_vec());
-                        let encodings = self.truncate(encodings);
-                        let deltas = self.compute_deltas(&encodings);
-                        let zero_sum = self.compute_zero_sum(&encodings);
-                        (deltas, zero_sum)
-                    })
-                    .collect::<Vec<_>>()
-            })
+            .map(|set| set.clone().into_chunks(self.backend.chunk_size()))
             .flatten()
-            .collect::<Vec<(Vec<BigInt>, BigUint)>>();
+            .collect::<Vec<_>>();
 
-        let chunk_com = self
+        // Get commitments for each chunk
+        let chunk_commitments = self
             .state
             .commitments
             .iter()
@@ -104,7 +96,7 @@ impl Verifier<state::CommitmentReceived> {
             .flatten()
             .collect::<Vec<_>>();
 
-        if chunk_com.len() != chunk_data.len() {
+        if chunk_commitments.len() != chunk_encodings.len() {
             // TODO proper error, count mismatch
             return Err(VerifierError::CustomError(
                 "if chunk_com.len() != chunk_data.len() {".to_string(),
@@ -112,13 +104,13 @@ impl Verifier<state::CommitmentReceived> {
         }
 
         // Compute public inputs for each chunk of plaintext
-        let public_inputs = chunk_com
+        let public_inputs = chunk_commitments
             .iter()
-            .zip(chunk_data.iter())
-            .map(|(com, chunk)| {
+            .zip(chunk_encodings.iter())
+            .map(|(com, enc)| {
                 self.create_verification_input(
-                    chunk.0.clone(),
-                    chunk.1.clone(),
+                    enc.compute_deltas(),
+                    enc.compute_zero_sum(),
                     com.plaintext_hash.clone(),
                     com.encoding_sum_hash.clone(),
                 )
@@ -129,10 +121,7 @@ impl Verifier<state::CommitmentReceived> {
         // Commenting the line below and instead verifying the chunks one by one.
         // self.backend.verify(public_inputs, proof_sets)?;
         assert!(public_inputs.len() == proof_sets.len());
-        for (input, proof) in public_inputs.iter().zip(proof_sets.iter()) {
-            self.backend
-                .verify(vec![input.clone()], vec![proof.to_vec()])?;
-        }
+        self.backend.verify(public_inputs, proof_sets)?;
 
         Ok(Verifier {
             backend: self.backend,

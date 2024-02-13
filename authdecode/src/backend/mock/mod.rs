@@ -7,7 +7,8 @@ pub mod verifier;
 pub use prover::MockProverBackend;
 pub use verifier::MockVerifierBackend;
 
-pub const CHUNK_SIZE: usize = 1234;
+/// Chunk size in bits.
+pub const CHUNK_SIZE: usize = 300 * 8;
 
 /// A mock proof.
 ///

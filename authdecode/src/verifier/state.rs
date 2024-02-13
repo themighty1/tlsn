@@ -1,6 +1,7 @@
 //! AuthDecode verifier states.
 
 use crate::{
+    encodings::FullEncodings,
     prover::{prover::CommitmentDetails, state::ProofCreated},
     verifier::backend::Backend,
     Proof, ProofProperties,
@@ -15,7 +16,7 @@ opaque_debug::implement!(Initialized);
 /// State after verifier received prover's commitment.
 pub struct CommitmentReceived {
     pub commitments: Vec<CommitmentDetails>,
-    pub encoding_pairs_sets: Vec<Vec<[u128; 2]>>,
+    pub full_encodings_sets: Vec<FullEncodings>,
 }
 
 opaque_debug::implement!(CommitmentReceived);
