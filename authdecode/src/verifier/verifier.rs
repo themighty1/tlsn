@@ -108,6 +108,8 @@ impl Verifier<state::CommitmentReceived> {
             .iter()
             .zip(chunk_encodings.iter())
             .map(|(com, enc)| {
+                // convert encodings
+                let enc = enc.clone().convert();
                 self.create_verification_input(
                     enc.compute_deltas(),
                     enc.compute_zero_sum(),
@@ -131,45 +133,6 @@ impl Verifier<state::CommitmentReceived> {
         })
     }
 
-    fn break_correlation(&self, encodings: Vec<[u128; 2]>) -> Vec<[u128; 2]> {
-        // Hash the encoding if it encodes bit 1, otherwise keep the encoding.
-        encodings
-            .iter()
-            .map(|pair| {
-                let mut bytes = [0u8; 16];
-                bytes.copy_from_slice(&blake3(&pair[1].to_be_bytes())[0..16]);
-                let one_encoding = u128::from_be_bytes(bytes);
-                [pair[0], one_encoding]
-            })
-            .collect()
-    }
-
-    /// Truncates each encoding to the 40 bit length. Returns truncated encodings.
-    ///
-    /// This is an optimization. 40-bit encodings provide 40 bits of statistical security
-    /// for the AuthDecode protocol.
-    fn truncate(&self, encodings: Vec<[u128; 2]>) -> Vec<[u128; 2]> {
-        encodings
-            .iter()
-            .map(|enc| [enc[0].shr(128 - 40), enc[1].shr(128 - 40)])
-            .collect()
-    }
-
-    /// Computes the arithmetic sum of the 0 bit encodings.
-    fn compute_zero_sum(&self, encodings: &[[u128; 2]]) -> BigUint {
-        encodings
-            .iter()
-            .fold(BigUint::from(0u128), |acc, &x| acc + BigUint::from(x[0]))
-    }
-
-    /// Computes the arithmetic difference between a pair of encodings.
-    fn compute_deltas(&self, encodings: &[[u128; 2]]) -> Vec<BigInt> {
-        encodings
-            .iter()
-            .map(|pair| BigInt::from(pair[1]) - BigInt::from(pair[0]))
-            .collect()
-    }
-
     /// Construct public inputs for the zk circuit for each [Chunk].
     fn create_verification_input(
         &self,
@@ -182,7 +145,7 @@ impl Verifier<state::CommitmentReceived> {
         // input unpadded deltas and have the backend pad them.
 
         // Pad the deltas with 0s to the size of the chunk
-        deltas.extend(vec![0u8.into(); self.backend.chunk_size() - deltas.len()]);
+        //deltas.extend(vec![0u8.into(); self.backend.chunk_size() - deltas.len()]);
 
         VerificationInput {
             plaintext_hash: pt_hash,
