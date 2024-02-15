@@ -1,69 +1,50 @@
 use super::{
-    utils::{biguint_to_f, deltas_to_matrices},
+    utils::{bigint_to_f, deltas_to_matrices},
     Curve, CHUNK_SIZE, USEFUL_BITS,
 };
-use crate::{
-    verifier::{backend::Backend, error::VerifierError, verifier::VerificationInput},
-    Proof,
-};
+use crate::verifier::{VerificationInput, VerifierError, Verify};
 use halo2_proofs::{
+    halo2curves::bn256::{Bn256, Fr as F, G1Affine},
     plonk,
-    plonk::{SingleVerifier, VerifyingKey},
-    poly::commitment::Params,
-    transcript::{Blake2bRead, Challenge255},
+    plonk::VerifyingKey,
+    poly::{
+        commitment::CommitmentScheme,
+        kzg::{
+            commitment::{KZGCommitmentScheme, ParamsKZG},
+            multiopen::VerifierGWC,
+            strategy::SingleStrategy,
+        },
+    },
+    transcript::{Blake2bRead, Challenge255, TranscriptReadBuffer},
 };
-use pasta_curves::{pallas::Base as F, EqAffine};
 
 /// halo2's native [halo2::VerifyingKey] can't be used without params, so we wrap
 /// them in one struct.
 #[derive(Clone)]
 pub struct VK {
-    pub key: VerifyingKey<EqAffine>,
-    pub params: Params<EqAffine>,
+    pub key: VerifyingKey<<KZGCommitmentScheme<Bn256> as CommitmentScheme>::Curve>,
+    pub params: ParamsKZG<Bn256>,
 }
 
 /// Implements the Verifier in the authdecode protocol.
 pub struct Verifier {
     verification_key: VK,
-    curve: Curve,
 }
 impl Verifier {
-    pub fn new(vk: VK, curve: Curve) -> Self {
+    pub fn new(vk: VK) -> Self {
         Self {
             verification_key: vk,
-            curve,
         }
-    }
-
-    fn field_size(&self) -> usize {
-        match self.curve {
-            Curve::Pallas => 255,
-            Curve::BN254 => 254,
-        }
-    }
-
-    fn useful_bits(&self) -> usize {
-        USEFUL_BITS
     }
 }
 
-impl Backend for Verifier {
-    fn verify(
-        &self,
-        inputs: Vec<VerificationInput>,
-        proofs: Vec<Proof>,
-    ) -> Result<(), VerifierError> {
-        // depending on the proof generation strategy used by the prover
-        // we match chunk_inputs to proofs and verify
-
-        // For now we assume there is only one chunk and only one proof for it.
-        let proof = proofs[0].clone();
-        let input = &inputs[0];
-
+impl Verify for Verifier {
+    fn verify(&self, input: VerificationInput) -> Result<bool, VerifierError> {
         let params = &self.verification_key.params;
         let vk = &self.verification_key.key;
 
-        let strategy = SingleVerifier::new(params);
+        let strategy = SingleStrategy::new(params);
+        let proof = input.proof;
         let mut transcript = Blake2bRead::<_, _, Challenge255<_>>::init(&proof[..]);
 
         // convert deltas into a matrix which halo2 expects
@@ -73,15 +54,21 @@ impl Backend for Verifier {
 
         // add another column with public inputs
         let tmp = &[
-            biguint_to_f(&input.plaintext_hash),
-            biguint_to_f(&input.encoding_sum_hash),
-            biguint_to_f(&input.zero_sum),
+            bigint_to_f(&input.plaintext_hash),
+            bigint_to_f(&input.label_sum_hash),
+            bigint_to_f(&input.sum_of_zero_labels),
         ];
         all_inputs.push(tmp);
 
         // let now = Instant::now();
         // perform the actual verification
-        let res = plonk::verify_proof(
+        let res = plonk::verify_proof::<
+            KZGCommitmentScheme<Bn256>,
+            VerifierGWC<'_, Bn256>,
+            Challenge255<G1Affine>,
+            Blake2bRead<&[u8], G1Affine, Challenge255<G1Affine>>,
+            SingleStrategy<'_, Bn256>,
+        >(
             params,
             vk,
             strategy,
@@ -92,8 +79,16 @@ impl Backend for Verifier {
         if res.is_err() {
             Err(VerifierError::VerificationFailed)
         } else {
-            Ok(())
+            Ok(true)
         }
+    }
+
+    fn field_size(&self) -> usize {
+        254
+    }
+
+    fn useful_bits(&self) -> usize {
+        USEFUL_BITS
     }
 
     fn chunk_size(&self) -> usize {

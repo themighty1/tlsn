@@ -1,22 +1,24 @@
+use halo2_gadgets::poseidon::{primitives::ConstantLength, Hash, Pow5Chip, Pow5Config};
 use halo2_proofs::{
     circuit::{AssignedCell, Layouter, Region, SimpleFloorPlanner, Value},
+    halo2curves::bn256::Fr as F,
     plonk::{
         Advice, Circuit, Column, ConstraintSystem, Constraints, Error, Expression, Instance,
         Selector,
     },
     poly::Rotation,
 };
-use pasta_curves::{pallas, Fp};
-use std::convert::TryInto;
 
-use super::poseidon::{
-    circuit_config::{configure_poseidon_rate_1, configure_poseidon_rate_15},
-    spec::{Spec1, Spec15},
+use super::{
+    poseidon::{
+        circuit_config::{configure_poseidon_rate_1, configure_poseidon_rate_15},
+        spec::{Spec1, Spec15},
+    },
+    utils::{bigint_to_256bits, bigint_to_f, bits_to_limbs, f_to_bigint},
 };
-use halo2_gadgets::poseidon::{primitives::ConstantLength, Hash, Pow5Chip, Pow5Config};
-use num::BigUint;
 
-use super::utils::{bigint_to_256bits, biguint_to_f, bits_to_limbs, f_to_biguint};
+use num::BigUint;
+use std::convert::TryInto;
 
 // See circuit_diagram.pdf for a diagram of the circuit
 
@@ -67,21 +69,13 @@ pub const CELLS_PER_ROW: usize = 64;
 /// (cs.blinding_factors() + 1)
 pub const USEFUL_ROWS: usize = 58;
 
-/// The bitsize of the salt used to create a commitment to the plaintext.
+/// The size of the salt of the hash in bits.
 ///
 /// We don't use the usual 128 bits, because it is convenient to put two 64-bit
 /// limbs of plaintext into the field element (which has 253 useful bits, see
 /// [super::USEFUL_BITS]) and use the remaining 125 bits of the field element
 /// for the salt (see [crate::Salt]).
-pub const PLAINTEXT_SALT_SIZE: usize = 125;
-
-/// The bitsize of the salt used to create a commitment to the encoding sum.
-///
-/// TODO this should be changed to be 128 bits, but it requires circuit modifications,
-/// so keeping as 125 for now.
-pub const ENCODING_SUM_SALT_SIZE: usize = 125;
-
-type F = pallas::Base;
+pub const SALT_SIZE: usize = 125;
 
 #[derive(Clone, Debug)]
 pub struct TopLevelConfig {
@@ -122,9 +116,9 @@ pub struct TopLevelConfig {
     selector_add_salt: Selector,
 
     /// config for Poseidon with rate 15
-    poseidon_config_rate15: Pow5Config<Fp, 16, 15>,
+    poseidon_config_rate15: Pow5Config<F, 16, 15>,
     /// config for Poseidon with rate 1
-    poseidon_config_rate1: Pow5Config<Fp, 2, 1>,
+    poseidon_config_rate1: Pow5Config<F, 2, 1>,
 
     /// Contains 3 public input in this order:
     /// [plaintext hash, label sum hash, zero sum].
@@ -261,7 +255,7 @@ impl Circuit<F> for AuthDecodeCircuit {
         // build Expressions containing powers of 2, to be used in some gates
         let two = BigUint::from(2u8);
         let pow_2_x: Vec<_> = (0..256)
-            .map(|i| Expression::Constant(biguint_to_f(&two.pow(i as u32))))
+            .map(|i| Expression::Constant(bigint_to_f(&two.pow(i as u32))))
             .collect();
 
         // GATES
@@ -354,10 +348,7 @@ impl Circuit<F> for AuthDecodeCircuit {
         meta.create_gate("add salt", |meta| {
             let cell = meta.query_advice(cfg.scratch_space[0], Rotation::cur());
             let salt = meta.query_advice(cfg.scratch_space[1], Rotation::cur());
-
-            // TODO: since plaintext salt and encoding_sum salt are potentially of different sizes,
-            // we need 2 differents gates "add plaintext salt" and "add encoding sum salt"
-            let sum = cell * pow_2_x[PLAINTEXT_SALT_SIZE].clone() + salt;
+            let sum = cell * pow_2_x[SALT_SIZE].clone() + salt;
 
             // constrain to match the expected value
             let expected = meta.query_advice(cfg.scratch_space[4], Rotation::cur());
@@ -383,7 +374,7 @@ impl Circuit<F> for AuthDecodeCircuit {
 
                 for j in 0..FULL_FIELD_ELEMENTS + 1 {
                     // decompose the private field element into bits
-                    let bits = bigint_to_256bits(f_to_biguint(&self.plaintext[j].clone()));
+                    let bits = bigint_to_256bits(f_to_bigint(&self.plaintext[j].clone()));
 
                     // The last field element consists of only 2 64-bit limbs,
                     // so we use 2 rows for its bits and we skip processing the
@@ -410,7 +401,7 @@ impl Circuit<F> for AuthDecodeCircuit {
                             || "",
                             cfg.expected_limbs,
                             j * 4 + row,
-                            || Value::known(biguint_to_f(&limbs[row + skip].clone())),
+                            || Value::known(bigint_to_f(&limbs[row + skip].clone())),
                         )?);
                         // constrain the expected limb to match what the gate
                         // composes from bits
@@ -468,7 +459,7 @@ impl Circuit<F> for AuthDecodeCircuit {
                 // Constrains each chunks of 4 limbs to be equal to a cell and
                 // returns the constrained cells containing the original plaintext
                 // (the private input to the circuit).
-                let plaintext: Result<Vec<AssignedCell<Fp, Fp>>, Error> = assigned_limbs
+                let plaintext: Result<Vec<AssignedCell<F, F>>, Error> = assigned_limbs
                     .chunks(4)
                     .map(|c| {
                         let sum =
@@ -507,12 +498,10 @@ impl Circuit<F> for AuthDecodeCircuit {
             chip,
             layouter.namespace(|| "init"),
         )?;
-        let f = label_sum.value_field();
-        println!("inside the circuit will hash {:?}", f);
         let output = hasher.hash(layouter.namespace(|| "hash"), [label_sum])?;
 
         layouter.assign_region(
-            || "constrain output 2",
+            || "constrain output",
             |mut region| {
                 let expected = region.assign_advice_from_instance(
                     || "",
@@ -538,7 +527,7 @@ impl Circuit<F> for AuthDecodeCircuit {
         let output = hasher.hash(layouter.namespace(|| "hash"), plaintext.try_into().unwrap())?;
 
         layouter.assign_region(
-            || "constrain output 1",
+            || "constrain output",
             |mut region| {
                 let expected = region.assign_advice_from_instance(
                     || "",
@@ -571,7 +560,7 @@ impl AuthDecodeCircuit {
     // the resulting cell is a properly constrained sum.
     fn compute_58_cell_sum(
         &self,
-        cells: &[AssignedCell<Fp, Fp>; 58],
+        cells: &[AssignedCell<F, F>; 58],
         region: &mut Region<F>,
         config: &TopLevelConfig,
         row_offset: usize,
@@ -688,10 +677,7 @@ impl AuthDecodeCircuit {
 
         // compute the expected sum and put it into the 5th cell
         let two = BigUint::from(2u8);
-
-        // TODO: revisit this since plaintext and encoding_sum salts are of different sizes
-
-        let pow_2_salt = biguint_to_f(&two.pow(PLAINTEXT_SALT_SIZE as u32));
+        let pow_2_salt = bigint_to_f(&two.pow(SALT_SIZE as u32));
         let sum = cell.value() * Value::known(pow_2_salt) + salt.value();
         let assigned_sum =
             region.assign_advice(|| "", config.scratch_space[4], row_offset, || sum)?;

@@ -1,47 +1,34 @@
-use super::{
-    circuit::{
-        AuthDecodeCircuit, ENCODING_SUM_SALT_SIZE, PLAINTEXT_SALT_SIZE, TOTAL_FIELD_ELEMENTS,
-    },
-    poseidon::{poseidon_1, poseidon_15},
-    utils::{biguint_to_f, deltas_to_matrices, f_to_biguint},
-    CHUNK_SIZE, USEFUL_BITS,
-};
-use crate::{
-    prover::{backend::Backend, error::ProverError, prover::ProofInput},
-    utils::{bits_to_biguint, u8vec_to_boolvec},
-    Delta, LabelSumHash, PlaintextHash, Proof, Salt, ZeroSum,
-};
+use crate::prover::{ProofInput, Prove, ProverError};
 use halo2_proofs::{
+    halo2curves::bn256::{Bn256, Fr as F, G1Affine},
     plonk,
     plonk::ProvingKey,
-    poly::commitment::Params,
-    transcript::{Blake2bWrite, Challenge255},
+    poly::{
+        commitment::CommitmentScheme,
+        kzg::{
+            commitment::{KZGCommitmentScheme, ParamsKZG},
+            multiopen::ProverGWC,
+        },
+    },
+    transcript::{Blake2bWrite, Challenge255, TranscriptWriterBuffer},
 };
+
+use super::{
+    circuit::{AuthDecodeCircuit, SALT_SIZE, TOTAL_FIELD_ELEMENTS},
+    poseidon::{poseidon_1, poseidon_15},
+    utils::{bigint_to_f, deltas_to_matrices, f_to_bigint},
+    CHUNK_SIZE, USEFUL_BITS,
+};
+
 use num::BigUint;
-use pasta_curves::{pallas::Base as F, EqAffine};
-use rand::{thread_rng, Rng};
-
-#[derive(Clone, Default)]
-// Public and private inputs to the zk circuit
-pub struct ProofInputHalo2 {
-    // Public
-    pub plaintext_hash: PlaintextHash,
-    pub label_sum_hash: LabelSumHash,
-    pub sum_of_zero_labels: ZeroSum,
-    // deltas in the CHUNK_SIZE quantity
-    pub deltas: Vec<Delta>,
-
-    // Private
-    pub plaintext: Vec<BigUint>,
-    pub salt: Salt,
-}
+use rand::thread_rng;
 
 /// halo2's native ProvingKey can't be used without params, so we wrap
 /// them in one struct.
 #[derive(Clone)]
 pub struct PK {
-    pub key: ProvingKey<EqAffine>,
-    pub params: Params<EqAffine>,
+    pub key: ProvingKey<<KZGCommitmentScheme<Bn256> as CommitmentScheme>::Curve>,
+    pub params: ParamsKZG<Bn256>,
 }
 
 /// Implements the Prover in the authdecode protocol using halo2
@@ -50,67 +37,8 @@ pub struct Prover {
     proving_key: PK,
 }
 
-impl Backend for Prover {
-    fn chunk_size(&self) -> usize {
-        CHUNK_SIZE
-    }
-
-    fn commit_plaintext(&self, plaintext: Vec<bool>) -> Result<(BigUint, BigUint), ProverError> {
-        commit_plaintext(plaintext)
-    }
-
-    fn commit_encoding_sum(
-        &self,
-        encoding_sum: BigUint,
-    ) -> Result<(BigUint, BigUint), ProverError> {
-        commit_encoding_sum(encoding_sum)
-    }
-
-    fn prove(&self, inputs: Vec<ProofInput>) -> Result<Vec<Proof>, ProverError> {
-        // TODO: here we decide on the strategy how to compose multiple inputs.
-        // Each input proves an AuthDecode commitment to one chunk of the plaintext.
-        // Depending on future benchmarks, we may want to compose multiple inputs in one circuit.
-
-        // Pad plaintext to the size of the chunk and convert it into BigUints
-        let new_inputs = inputs
-            .iter()
-            .map(|input| {
-                let mut plaintext = input.plaintext.clone();
-                plaintext.extend(vec![false; self.chunk_size() - plaintext.len()]);
-                let plaintext = plaintext
-                    .chunks(self.useful_bits())
-                    .map(bits_to_biguint)
-                    .collect::<Vec<_>>();
-                ProofInputHalo2 {
-                    deltas: input.deltas.clone(),
-                    label_sum_hash: input.encoding_sum_hash.clone(),
-                    plaintext_hash: input.plaintext_hash.clone(),
-                    sum_of_zero_labels: input.zero_sum.clone(),
-                    plaintext,
-                    salt: input.plaintext_salt.clone(),
-                }
-            })
-            .collect::<Vec<_>>();
-
-        // For now, we use the default "one input per one circuit" strategy
-        let proofs = new_inputs
-            .iter()
-            .map(|input| self.do_prove(input.clone()))
-            .collect::<Result<Vec<Proof>, ProverError>>()?;
-        Ok(proofs)
-    }
-}
-
-impl Prover {
-    pub fn new(pk: PK) -> Self {
-        Self { proving_key: pk }
-    }
-
-    fn useful_bits(&self) -> usize {
-        USEFUL_BITS
-    }
-
-    fn do_prove(&self, input: ProofInputHalo2) -> Result<Proof, ProverError> {
+impl Prove for Prover {
+    fn prove(&self, input: ProofInput) -> Result<Vec<u8>, ProverError> {
         if input.deltas.len() != self.chunk_size() || input.plaintext.len() != TOTAL_FIELD_ELEMENTS
         {
             // this can only be caused by an error in
@@ -126,7 +54,7 @@ impl Prover {
         let plaintext: [F; TOTAL_FIELD_ELEMENTS] = input
             .plaintext
             .iter()
-            .map(biguint_to_f)
+            .map(bigint_to_f)
             .collect::<Vec<_>>()
             .try_into()
             .unwrap();
@@ -136,15 +64,15 @@ impl Prover {
 
         // add another column with public inputs
         let tmp = &[
-            biguint_to_f(&input.plaintext_hash),
-            biguint_to_f(&input.label_sum_hash),
-            biguint_to_f(&input.sum_of_zero_labels),
+            bigint_to_f(&input.plaintext_hash),
+            bigint_to_f(&input.label_sum_hash),
+            bigint_to_f(&input.sum_of_zero_labels),
         ];
         all_inputs.push(tmp);
 
         // prepare the proving system and generate the proof:
 
-        let circuit = AuthDecodeCircuit::new(plaintext, biguint_to_f(&input.salt), deltas_as_rows);
+        let circuit = AuthDecodeCircuit::new(plaintext, bigint_to_f(&input.salt), deltas_as_rows);
 
         let params = &self.proving_key.params;
         let pk = &self.proving_key.key;
@@ -155,7 +83,14 @@ impl Prover {
 
         // let now = Instant::now();
 
-        let res = plonk::create_proof(
+        let res = plonk::create_proof::<
+            KZGCommitmentScheme<Bn256>,
+            ProverGWC<'_, Bn256>,
+            Challenge255<G1Affine>,
+            _,
+            Blake2bWrite<Vec<u8>, G1Affine, Challenge255<_>>,
+            _,
+        >(
             params,
             pk,
             &[circuit],
@@ -172,6 +107,36 @@ impl Prover {
         // println!("Proof size [{} kB]", proof.len() as f64 / 1024.0);
         Ok(proof)
     }
+
+    fn useful_bits(&self) -> usize {
+        USEFUL_BITS
+    }
+
+    fn poseidon_rate(&self) -> usize {
+        TOTAL_FIELD_ELEMENTS
+    }
+
+    fn permutation_count(&self) -> usize {
+        1
+    }
+
+    fn salt_size(&self) -> usize {
+        SALT_SIZE
+    }
+
+    fn chunk_size(&self) -> usize {
+        CHUNK_SIZE
+    }
+
+    fn hash(&self, inputs: &[BigUint]) -> Result<BigUint, ProverError> {
+        hash_internal(inputs)
+    }
+}
+
+impl Prover {
+    pub fn new(pk: PK) -> Self {
+        Self { proving_key: pk }
+    }
 }
 
 /// Hashes `inputs` with Poseidon and returns the digest as `BigUint`.
@@ -181,7 +146,7 @@ fn hash_internal(inputs: &[BigUint]) -> Result<BigUint, ProverError> {
             // hash with rate-15 Poseidon
             let fes: [F; 15] = inputs
                 .iter()
-                .map(biguint_to_f)
+                .map(bigint_to_f)
                 .collect::<Vec<_>>()
                 .try_into()
                 .unwrap();
@@ -191,7 +156,7 @@ fn hash_internal(inputs: &[BigUint]) -> Result<BigUint, ProverError> {
             // hash with rate-1 Poseidon
             let fes: [F; 1] = inputs
                 .iter()
-                .map(biguint_to_f)
+                .map(bigint_to_f)
                 .collect::<Vec<_>>()
                 .try_into()
                 .unwrap();
@@ -199,82 +164,25 @@ fn hash_internal(inputs: &[BigUint]) -> Result<BigUint, ProverError> {
         }
         _ => return Err(ProverError::WrongPoseidonInput),
     };
-    Ok(f_to_biguint(&digest))
-}
-
-fn commit_plaintext(mut plaintext: Vec<bool>) -> Result<(BigUint, BigUint), ProverError> {
-    if plaintext.len() > CHUNK_SIZE {
-        // TODO proper error
-        return Err(ProverError::InternalError);
-    }
-
-    // Pad the plaintext to the size of the chunk.
-    plaintext.extend(vec![false; CHUNK_SIZE - plaintext.len()]);
-
-    // Generate random salt and add it to the plaintext.
-    let mut rng = thread_rng();
-    let salt: Vec<bool> = core::iter::repeat_with(|| rng.gen::<bool>())
-        .take(PLAINTEXT_SALT_SIZE)
-        .collect::<Vec<_>>();
-
-    plaintext.extend(salt.clone());
-
-    // Convert bits into field elements and hash them.
-    let field_elements: Vec<BigUint> = plaintext.chunks(USEFUL_BITS).map(bits_to_biguint).collect();
-
-    let pt_digest = hash_internal(&field_elements)?;
-
-    Ok((pt_digest, bits_to_biguint(&salt)))
-}
-
-fn commit_encoding_sum(encoding_sum: BigUint) -> Result<(BigUint, BigUint), ProverError> {
-    // Generate random salt
-    let mut rng = thread_rng();
-    let salt: Vec<bool> = core::iter::repeat_with(|| rng.gen::<bool>())
-        .take(ENCODING_SUM_SALT_SIZE)
-        .collect::<Vec<_>>();
-
-    // Commit to encodings
-
-    let enc_sum_bits = u8vec_to_boolvec(&encoding_sum.to_bytes_be());
-
-    if (enc_sum_bits.len() + ENCODING_SUM_SALT_SIZE) > USEFUL_BITS {
-        // TODO proper error, no room for salt
-        return Err(ProverError::InternalError);
-    }
-
-    // Pack sum and salt into a single field element.
-    // The high 128 bits are for the sum, the low 125 bits are for the salt.
-
-    // TODO: need to change this so that the high 125 bits are for the sum, the low
-    // 128 bits are for the salt.
-
-    let mut field_element = vec![false; USEFUL_BITS];
-    field_element[128 - enc_sum_bits.len()..128].copy_from_slice(&enc_sum_bits);
-    field_element[USEFUL_BITS - ENCODING_SUM_SALT_SIZE..].copy_from_slice(&salt);
-
-    let enc_digest = hash_internal(&[bits_to_biguint(&field_element)])?;
-
-    Ok((enc_digest, bits_to_biguint(&salt)))
+    Ok(f_to_bigint(&digest))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{
-        backend::halo2::{
+        halo2_backend::{
             circuit::{CELLS_PER_ROW, K},
+            prover::hash_internal,
             utils::bigint_to_256bits,
             Curve,
         },
-        prover::{backend::Backend as ProverBackend, error::ProverError, prover::ProofInput},
+        prover::{ProofInput, Prove, ProverError},
         tests::run_until_proofs_are_generated,
-        verifier::{
-            backend::Backend as VerifierBackend, error::VerifierError, verifier::VerificationInput,
-        },
+        verifier::{VerificationInput, VerifierError, Verify},
         Proof,
     };
-    use halo2_proofs::dev::MockProver;
+    use halo2_proofs::{dev::MockProver, plonk::Assignment};
     use num::BigUint;
 
     /// TestHalo2Prover is a test prover. It is the same as [Prover] except:
@@ -285,31 +193,8 @@ mod tests {
     /// protocol execution. Also allows us to corrupt each of the circuit inputs and
     /// expect a failure.
     struct TestHalo2Prover {}
-    impl ProverBackend for TestHalo2Prover {
-        fn prove(&self, inputs: Vec<ProofInput>) -> Result<Vec<Proof>, ProverError> {
-            // Pad plaintext to the size of the chunk and convert bits into BigUints
-            let new_inputs = inputs
-                .iter()
-                .map(|input| {
-                    let mut plaintext = input.plaintext.clone();
-                    plaintext.extend(vec![false; self.chunk_size() - plaintext.len()]);
-                    let plaintext = plaintext
-                        .chunks(self.useful_bits())
-                        .map(bits_to_biguint)
-                        .collect::<Vec<_>>();
-                    ProofInputHalo2 {
-                        deltas: input.deltas.clone(),
-                        label_sum_hash: input.encoding_sum_hash.clone(),
-                        plaintext_hash: input.plaintext_hash.clone(),
-                        sum_of_zero_labels: input.zero_sum.clone(),
-                        plaintext,
-                        salt: input.plaintext_salt.clone(),
-                    }
-                })
-                .collect::<Vec<_>>();
-
-            let input = new_inputs[0].clone();
-
+    impl Prove for TestHalo2Prover {
+        fn prove(&self, input: ProofInput) -> Result<Proof, ProverError> {
             // convert into matrices
             let (deltas_as_rows, deltas_as_columns) =
                 deltas_to_matrices(&input.deltas, self.useful_bits());
@@ -318,7 +203,7 @@ mod tests {
             let good_plaintext: [F; TOTAL_FIELD_ELEMENTS] = input
                 .plaintext
                 .iter()
-                .map(biguint_to_f)
+                .map(bigint_to_f)
                 .collect::<Vec<_>>()
                 .try_into()
                 .unwrap();
@@ -329,23 +214,21 @@ mod tests {
 
             // add another column with public inputs
             let tmp = vec![
-                biguint_to_f(&input.plaintext_hash),
-                biguint_to_f(&input.label_sum_hash),
-                biguint_to_f(&input.sum_of_zero_labels),
+                bigint_to_f(&input.plaintext_hash),
+                bigint_to_f(&input.label_sum_hash),
+                bigint_to_f(&input.sum_of_zero_labels),
             ];
             good_inputs.push(tmp);
 
             let circuit =
-                AuthDecodeCircuit::new(good_plaintext, biguint_to_f(&input.salt), deltas_as_rows);
+                AuthDecodeCircuit::new(good_plaintext, bigint_to_f(&input.salt), deltas_as_rows);
 
             // Test with the correct inputs.
             // Expect successful verification.
 
             let prover = MockProver::run(K, &circuit, good_inputs.clone()).unwrap();
             let res = prover.verify();
-            if res.is_err() {
-                println!("ERROR: {:?}", res);
-            }
+            println!("{:?}", res);
             assert!(res.is_ok());
 
             // Find one delta which corresponds to plaintext bit 1 and corrupt
@@ -393,7 +276,7 @@ mod tests {
             let mut bad_plaintext = good_plaintext;
             bad_plaintext[0] = F::from(123);
             let circuit =
-                AuthDecodeCircuit::new(bad_plaintext, biguint_to_f(&input.salt), deltas_as_rows);
+                AuthDecodeCircuit::new(bad_plaintext, bigint_to_f(&input.salt), deltas_as_rows);
             let prover = MockProver::run(K, &circuit, good_inputs.clone()).unwrap();
             assert!(prover.verify().is_err());
 
@@ -402,29 +285,35 @@ mod tests {
 
             let bad_salt = BigUint::from(123u8);
             let circuit =
-                AuthDecodeCircuit::new(good_plaintext, biguint_to_f(&bad_salt), deltas_as_rows);
+                AuthDecodeCircuit::new(good_plaintext, bigint_to_f(&bad_salt), deltas_as_rows);
             let prover = MockProver::run(K, &circuit, good_inputs.clone()).unwrap();
             assert!(prover.verify().is_err());
 
-            Ok(vec![Default::default()])
+            Ok(Default::default())
+        }
+
+        fn useful_bits(&self) -> usize {
+            USEFUL_BITS
+        }
+
+        fn poseidon_rate(&self) -> usize {
+            TOTAL_FIELD_ELEMENTS
+        }
+
+        fn permutation_count(&self) -> usize {
+            1
+        }
+
+        fn salt_size(&self) -> usize {
+            SALT_SIZE
         }
 
         fn chunk_size(&self) -> usize {
             CHUNK_SIZE
         }
 
-        fn commit_plaintext(
-            &self,
-            plaintext: Vec<bool>,
-        ) -> Result<(BigUint, BigUint), ProverError> {
-            commit_plaintext(plaintext)
-        }
-
-        fn commit_encoding_sum(
-            &self,
-            encoding_sum: BigUint,
-        ) -> Result<(BigUint, BigUint), ProverError> {
-            commit_encoding_sum(encoding_sum)
+        fn hash(&self, inputs: &[BigUint]) -> Result<BigUint, ProverError> {
+            hash_internal(inputs)
         }
     }
 
@@ -432,32 +321,30 @@ mod tests {
         pub fn new() -> Self {
             Self {}
         }
-
-        fn useful_bits(&self) -> usize {
-            USEFUL_BITS
-        }
     }
 
     /// This verifier is the same as [crate::halo2_backend::verifier::Verifier] except:
     /// - it doesn't require a verifying key
     /// - it does not verify since `MockProver` does that already
-    struct TestHalo2Verifier {
-        curve: Curve,
-    }
+    struct TestHalo2Verifier {}
 
     impl TestHalo2Verifier {
-        pub fn new(curve: Curve) -> Self {
-            Self { curve }
+        pub fn new() -> Self {
+            Self {}
         }
     }
 
-    impl VerifierBackend for TestHalo2Verifier {
-        fn verify(
-            &self,
-            inputs: Vec<VerificationInput>,
-            proofs: Vec<Proof>,
-        ) -> Result<(), VerifierError> {
-            Ok(())
+    impl Verify for TestHalo2Verifier {
+        fn verify(&self, _: VerificationInput) -> Result<bool, VerifierError> {
+            Ok(false)
+        }
+
+        fn field_size(&self) -> usize {
+            254
+        }
+
+        fn useful_bits(&self) -> usize {
+            USEFUL_BITS
         }
 
         fn chunk_size(&self) -> usize {
@@ -466,15 +353,10 @@ mod tests {
     }
 
     #[test]
-    // As of Oct 2022 there appears to be a bug in halo2 which causes the prove
-    // times with MockProver be as long as with a real prover. Marking this test
-    // as expensive.
-    // #[ignore = "expensive"]
-    /// Tests the circuit with the correct inputs as well as wrong inputs. The logic is
-    /// in [TestHalo2Prover]'s prove()
+    /// Tests the circuit with a mock prover.
     fn test_circuit() {
         let prover = Box::new(TestHalo2Prover::new());
-        let verifier = Box::new(TestHalo2Verifier::new(Curve::Pallas));
+        let verifier = Box::new(TestHalo2Verifier::new());
         let _ = run_until_proofs_are_generated(prover, verifier);
     }
 }

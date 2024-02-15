@@ -3,9 +3,9 @@ use crate::{
     utils::{boolvec_to_u8vec, u8vec_to_boolvec},
     Delta,
 };
-use ff::{Field, FromUniformBytes, PrimeField};
-use num::{bigint::Sign, BigInt, BigUint, Signed};
-use pasta_curves::Fp as F;
+use ff::{FromUniformBytes, PrimeField};
+use halo2_proofs::halo2curves::bn256::Fr as F;
+use num::BigUint;
 
 /// Decomposes a `BigUint` into bits and returns the bits in MSB-first bit order,
 /// left padding them with zeroes to the size of 256.
@@ -45,29 +45,14 @@ fn test_bigint_to_256bits() {
 /// Converts a `BigUint` into an field element type.
 /// The assumption is that `bigint` was sanitized earlier and is not larger
 /// than [crate::verifier::Verify::field_size]
-pub fn biguint_to_f(bigint: &BigUint) -> F {
+pub fn bigint_to_f(bigint: &BigUint) -> F {
     let le = bigint.to_bytes_le();
     let mut wide = [0u8; 64];
     wide[0..le.len()].copy_from_slice(&le);
     F::from_uniform_bytes(&wide)
 }
-
-/// Converts a `BigInt` into an field element type.
-/// The assumption is that `bigint` was sanitized earlier and is not larger
-/// than [crate::verifier::Verify::field_size]
-pub fn bigint_to_f(bigint: &BigInt) -> F {
-    let sign = bigint.sign();
-    // Safe to unwrap since .abs() always returns a non-negative integer.
-    let f = biguint_to_f(&bigint.abs().to_biguint().unwrap());
-    if sign == Sign::Minus {
-        -f
-    } else {
-        f
-    }
-}
-
 #[test]
-fn test_biguint_to_f() {
+fn test_bigint_to_f() {
     // Test that the sum of 2 random `BigUint`s matches the sum of 2 field elements
     use num_bigint::RandomBits;
     use rand::{thread_rng, Rng};
@@ -77,21 +62,21 @@ fn test_biguint_to_f() {
     let b: BigUint = rng.sample(RandomBits::new(253));
     let c = a.clone() + b.clone();
 
-    let a_f = biguint_to_f(&a);
-    let b_f = biguint_to_f(&b);
+    let a_f = bigint_to_f(&a);
+    let b_f = bigint_to_f(&b);
     let c_f = a_f + b_f;
 
-    assert_eq!(biguint_to_f(&c), c_f);
+    assert_eq!(bigint_to_f(&c), c_f);
 }
 
 /// Converts `F` into a `BigUint` type.
 /// The assumption is that the field is <= 256 bits
-pub fn f_to_biguint(f: &F) -> BigUint {
+pub fn f_to_bigint(f: &F) -> BigUint {
     let tmp: [u8; 32] = f.try_into().unwrap();
     BigUint::from_bytes_le(&tmp)
 }
 #[test]
-fn test_f_to_biguint() {
+fn test_f_to_bigint() {
     // Test that the sum of 2 random `F`s matches the expected sum
     use rand::{thread_rng, Rng};
     let mut rng = thread_rng();
@@ -99,7 +84,7 @@ fn test_f_to_biguint() {
     let a = rng.gen::<u128>();
     let b = rng.gen::<u128>();
 
-    let res = f_to_biguint(&(F::from_u128(a) + F::from_u128(b)));
+    let res = f_to_bigint(&(F::from_u128(a) + F::from_u128(b)));
     let expected: BigUint = BigUint::from(a) + BigUint::from(b);
 
     assert_eq!(res, expected);
@@ -187,8 +172,8 @@ fn test_deltas_to_matrices() {
     // all deltas except the penultimate one are 1. The penultimate delta is 2.
     let deltas = [
         vec![Delta::from(1u8); CHUNK_SIZE - 2],
-        vec![BigInt::from(2u8)],
-        vec![BigInt::from(1u8)],
+        vec![BigUint::from(2u8)],
+        vec![BigUint::from(1u8)],
     ]
     .concat();
 
