@@ -106,10 +106,10 @@ impl Verifier<state::CommitmentReceived> {
         // Compute public inputs for each chunk of plaintext
         let public_inputs = chunk_commitments
             .iter()
-            .zip(chunk_encodings.iter())
+            .zip(chunk_encodings)
             .map(|(com, enc)| {
                 // convert encodings
-                let enc = enc.clone().convert();
+                let enc = enc.convert();
                 self.create_verification_input(
                     enc.compute_deltas(),
                     enc.compute_zero_sum(),
@@ -141,12 +141,6 @@ impl Verifier<state::CommitmentReceived> {
         pt_hash: BigUint,
         enc_hash: BigUint,
     ) -> VerificationInput {
-        // For now the halo2 backend expects deltas to be padded by us. In the future we will
-        // input unpadded deltas and have the backend pad them.
-
-        // Pad the deltas with 0s to the size of the chunk
-        //deltas.extend(vec![0u8.into(); self.backend.chunk_size() - deltas.len()]);
-
         VerificationInput {
             plaintext_hash: pt_hash,
             encoding_sum_hash: enc_hash,

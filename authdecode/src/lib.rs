@@ -48,7 +48,13 @@ struct ProofProperties {
 #[cfg(test)]
 mod tests {
     use crate::{
-        backend::mock::{MockProverBackend, MockVerifierBackend},
+        backend::{
+            halo2,
+            halo2::{
+                prover::Prover as Halo2ProverBackend, verifier::Verifier as Halo2VerififerBackend,
+            },
+            mock::{MockProverBackend, MockVerifierBackend},
+        },
         encodings::{ActiveEncodings, Encoding, FullEncodings, ToActiveEncodings},
         prover::{
             backend::Backend as ProverBackend,
@@ -60,13 +66,14 @@ mod tests {
         verifier::verifier::Verifier,
         Proof,
     };
+
     use hex::encode;
     use num::BigUint;
     use rand::{Rng, SeedableRng};
     use rand_chacha::ChaCha12Rng;
 
     /// The size of plaintext in bytes;
-    const PLAINTEXT_SIZE: usize = 2000;
+    const PLAINTEXT_SIZE: usize = 100;
 
     // A dummy encodings verifier.
     struct DummyEncodingsVerifier {}
@@ -83,6 +90,14 @@ mod tests {
 
     #[test]
     fn test_authdecode() {
+        let prover = Prover::new(Box::new(MockProverBackend::new()));
+        let verifier = Verifier::new(Box::new(MockVerifierBackend::new()));
+
+        let proving_key = halo2::onetimesetup::OneTimeSetup::proving_key();
+        let verification_key = halo2::onetimesetup::OneTimeSetup::verification_key();
+        let prover = Prover::new(Box::new(Halo2ProverBackend::new(proving_key)));
+        let verifier = Verifier::new(Box::new(Halo2VerififerBackend::new(verification_key)));
+
         let mut rng = ChaCha12Rng::from_seed([0; 32]);
 
         // Generate random plaintext.
@@ -107,9 +122,6 @@ mod tests {
 
         // Prover's active encodings.
         let active_encodings = full_encodings.encode(&u8vec_to_boolvec(&plaintext));
-
-        let prover = Prover::new(Box::new(MockProverBackend::new()));
-        let verifier = Verifier::new(Box::new(MockVerifierBackend::new()));
 
         let (prover, commitments) = prover.commit(vec![(plaintext, active_encodings)]).unwrap();
 

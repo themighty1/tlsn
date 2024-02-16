@@ -186,7 +186,7 @@ impl Prover<state::Committed> {
                     // TODO proper error
                     return Err(ProverError::InternalError);
                 }
-                Ok(full_encodings.clone())
+                Ok(full_encodings.clone().convert())
             })
             .collect::<Result<Vec<FullEncodings>, ProverError>>()?;
 

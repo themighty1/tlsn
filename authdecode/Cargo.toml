@@ -18,14 +18,14 @@ blake3 = "1.3.3"
 serde = "1"
 bincode = "1"
 
-#dependencies for halo2
+# Dependencies for halo2.
+# Pinning a specific commit of halo2 when the Poseidon gadget was still available.
 halo2_proofs = { git = "https://github.com/privacy-scaling-explorations/halo2", rev = "9ee0ced", default-features = false}
 halo2_gadgets = { git = "https://github.com/privacy-scaling-explorations/halo2", rev = "9ee0ced"}
 group = "0.13"
 ff = "0.13"
 
 # force the below version of halo2curves to be used in halo2_proofs, otherwise we get compilation errors.
-# halo2curves = "0.6.1"
 [patch.crates-io]
 halo2curves = { git = "https://github.com/privacy-scaling-explorations/halo2curves", tag = "v0.6.1"}
 

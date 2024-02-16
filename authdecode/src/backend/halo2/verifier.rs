@@ -1,21 +1,24 @@
-use super::{
-    utils::{bigint_to_f, deltas_to_matrices},
-    Curve, CHUNK_SIZE, USEFUL_BITS,
+use super::{utils::deltas_to_matrices, CHUNK_SIZE, USEFUL_BITS};
+use crate::{
+    backend::halo2::utils::biguint_to_f,
+    verifier::{backend::Backend, error::VerifierError, verifier::VerificationInput},
+    Proof,
 };
-use crate::verifier::{VerificationInput, VerifierError, Verify};
+
+use ff::{FromUniformBytes, WithSmallOrderMulGroup};
 use halo2_proofs::{
-    halo2curves::bn256::{Bn256, Fr as F, G1Affine},
-    plonk,
-    plonk::VerifyingKey,
+    halo2curves::bn256::{Bn256, Fr as F},
+    plonk::{verify_proof as verify_plonk_proof, VerifyingKey},
     poly::{
-        commitment::CommitmentScheme,
+        commitment::{CommitmentScheme, Verifier as CommitmentVerifier},
         kzg::{
             commitment::{KZGCommitmentScheme, ParamsKZG},
             multiopen::VerifierGWC,
-            strategy::SingleStrategy,
+            strategy::AccumulatorStrategy,
         },
+        VerificationStrategy,
     },
-    transcript::{Blake2bRead, Challenge255, TranscriptReadBuffer},
+    transcript::{Blake2bRead, Challenge255, EncodedChallenge, TranscriptReadBuffer},
 };
 
 /// halo2's native [halo2::VerifyingKey] can't be used without params, so we wrap
@@ -36,16 +39,27 @@ impl Verifier {
             verification_key: vk,
         }
     }
+
+    fn useful_bits(&self) -> usize {
+        USEFUL_BITS
+    }
 }
 
-impl Verify for Verifier {
-    fn verify(&self, input: VerificationInput) -> Result<bool, VerifierError> {
+impl Backend for Verifier {
+    fn verify(
+        &self,
+        inputs: Vec<VerificationInput>,
+        proofs: Vec<Proof>,
+    ) -> Result<(), VerifierError> {
+        // depending on the proof generation strategy used by the prover
+        // we match chunk_inputs to proofs and verify
+
+        // For now we assume there is only one chunk and only one proof for it.
+        let proof = proofs[0].clone();
+        let input = &inputs[0];
+
         let params = &self.verification_key.params;
         let vk = &self.verification_key.key;
-
-        let strategy = SingleStrategy::new(params);
-        let proof = input.proof;
-        let mut transcript = Blake2bRead::<_, _, Challenge255<_>>::init(&proof[..]);
 
         // convert deltas into a matrix which halo2 expects
         let (_, deltas_as_columns) = deltas_to_matrices(&input.deltas, self.useful_bits());
@@ -54,44 +68,62 @@ impl Verify for Verifier {
 
         // add another column with public inputs
         let tmp = &[
-            bigint_to_f(&input.plaintext_hash),
-            bigint_to_f(&input.label_sum_hash),
-            bigint_to_f(&input.sum_of_zero_labels),
+            biguint_to_f(&input.plaintext_hash),
+            biguint_to_f(&input.encoding_sum_hash),
+            biguint_to_f(&input.zero_sum),
         ];
         all_inputs.push(tmp);
 
+        //println!("verifier will use instances {:?}", all_inputs);
+        //println!();
+
         // let now = Instant::now();
-        // perform the actual verification
-        let res = plonk::verify_proof::<
+        verify_proof::<
             KZGCommitmentScheme<Bn256>,
             VerifierGWC<'_, Bn256>,
-            Challenge255<G1Affine>,
-            Blake2bRead<&[u8], G1Affine, Challenge255<G1Affine>>,
-            SingleStrategy<'_, Bn256>,
-        >(
-            params,
-            vk,
-            strategy,
-            &[all_inputs.as_slice()],
-            &mut transcript,
-        );
+            _,
+            Blake2bRead<_, _, Challenge255<_>>,
+            AccumulatorStrategy<_>,
+        >(params, vk, &proof, &[all_inputs.as_slice()])
         // println!("Proof verified [{:?}]", now.elapsed());
-        if res.is_err() {
-            Err(VerifierError::VerificationFailed)
-        } else {
-            Ok(true)
-        }
-    }
-
-    fn field_size(&self) -> usize {
-        254
-    }
-
-    fn useful_bits(&self) -> usize {
-        USEFUL_BITS
     }
 
     fn chunk_size(&self) -> usize {
         CHUNK_SIZE
     }
+}
+
+fn verify_proof<
+    'a,
+    'params,
+    Scheme: CommitmentScheme<Scalar = halo2_proofs::halo2curves::bn256::Fr>,
+    V: CommitmentVerifier<'params, Scheme>,
+    E: EncodedChallenge<Scheme::Curve>,
+    T: TranscriptReadBuffer<&'a [u8], Scheme::Curve, E>,
+    Strategy: VerificationStrategy<'params, Scheme, V, Output = Strategy>,
+>(
+    params_verifier: &'params Scheme::ParamsVerifier,
+    vk: &VerifyingKey<Scheme::Curve>,
+    proof: &'a [u8],
+    instances: &[&[&[F]]],
+) -> Result<(), VerifierError>
+where
+    Scheme::Scalar: Ord + WithSmallOrderMulGroup<3> + FromUniformBytes<64>,
+{
+    let mut transcript = T::init(proof);
+
+    let strategy = Strategy::new(params_verifier);
+    let strategy = verify_plonk_proof(params_verifier, vk, strategy, instances, &mut transcript);
+
+    if strategy.is_err() {
+        return Err(VerifierError::VerificationFailed);
+    }
+
+    let str = strategy.unwrap();
+
+    if !str.finalize() {
+        return Err(VerifierError::VerificationFailed);
+    }
+
+    Ok(())
 }
