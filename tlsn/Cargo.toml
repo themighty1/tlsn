@@ -9,7 +9,11 @@ members = [
     "tlsn-notary-client",
     "tests-integration",
     "examples",
-    "benches",
+    "benches/binary",
+    "benches/library",
+    "benches/browser-prover-native",
+    "benches/browser-prover-wasm",
+    "benches/browser-prover-core",
 ]
 resolver = "2"
 
@@ -31,6 +35,8 @@ uid-mux = { path = "../components/uid-mux" }
 
 tlsn-utils = { git = "https://github.com/tlsnotary/tlsn-utils", rev = "51f313d" }
 tlsn-utils-aio = { git = "https://github.com/tlsnotary/tlsn-utils", rev = "51f313d" }
+#tlsn-utils = { path = "../../tlsn-utils/utils" }
+#tlsn-utils-aio = { path = "../../tlsn-utils/utils-aio" }
 spansy = { git = "https://github.com/tlsnotary/tlsn-utils", rev = "51f313d" }
 
 mpz-core = { git = "https://github.com/privacy-scaling-explorations/mpz", rev = "9f7403b" }
@@ -68,3 +74,13 @@ tracing-subscriber = "0.3"
 rstest = "0.17"
 
 web-time = "0.2"
+
+#[patch."https://github.com/tlsnotary/tlsn-utils"]
+#tlsn-utils = { path = "../../tlsn-utils/utils" }
+#tlsn-utils-aio = { path = "../../tlsn-utils/utils-aio" }
+
+
+[patch.crates-io]
+ahash = { git = "https://github.com/tkaitchuck/aHash", rev = "v0.8.11" }
+curve25519-dalek = { git = "https://github.com/dalek-cryptography/curve25519-dalek", rev = "curve25519-4.1.3" }
+

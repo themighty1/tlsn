@@ -25,10 +25,12 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let ip = std::env::var("VERIFIER_IP").unwrap_or_else(|_| "10.10.1.1".to_string());
+    //let ip = std::env::var("VERIFIER_IP").unwrap_or_else(|_| "127.0.0.1".to_string());
     let port: u16 = std::env::var("VERIFIER_PORT")
         .map(|port| port.parse().expect("port is valid u16"))
-        .unwrap_or(8000);
+        .unwrap_or(8123);
     let host = (ip.as_str(), port);
+    println!("Host is {:?}", host);
 
     let listener = tokio::net::TcpListener::bind(host)
         .await

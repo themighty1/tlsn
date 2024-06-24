@@ -1,5 +1,6 @@
 pub mod config;
 pub mod metrics;
+pub mod prover;
 
 use std::{io, process::Command};
 
@@ -26,6 +27,10 @@ pub fn set_up() -> io::Result<()> {
     // Set devices up
     set_device_up(PROVER_NAMESPACE, PROVER_INTERFACE)?;
     set_device_up(VERIFIER_NAMESPACE, VERIFIER_INTERFACE)?;
+
+    // Bring up the loopback interface.
+    set_device_up(PROVER_NAMESPACE, "lo")?;
+    set_device_up(VERIFIER_NAMESPACE, "lo")?;
 
     // Assign IPs
     assign_ip_to_interface(PROVER_NAMESPACE, PROVER_INTERFACE, PROVER_SUBNET)?;

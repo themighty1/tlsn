@@ -1,0 +1,33 @@
+[package]
+edition = "2021"
+name = "tlsn-benches-browser-prover-core"
+publish = false
+version = "0.0.0"
+
+
+# Adding an empty workspace to exclude this package from a rust workspace.
+# [workspace]
+
+[dependencies]
+futures = { version = "0.3", features = ["compat"] }
+futures-util = "0.3.28"
+serde = { version = "1.0.147", features = ["derive"] }
+serde_json = "1.0"
+tracing = "0.1"
+pin-project-lite = "0.2.4"
+anyhow = "1.0"
+log = {version="0.4.1", default-features = false, features=["release_max_level_debug"]}
+async-trait = "0.1.81"
+cfg-if = "1.0"
+# Use the patched ws_stream_wasm to fix the issue https://github.com/najamelan/ws_stream_wasm/issues/12#issuecomment-1711902958
+ws_stream_wasm = { version = "0.7.4", git = "https://github.com/tlsnotary/ws_stream_wasm", rev = "2ed12aad9f0236e5321f577672f309920b2aef51", features = ["tokio_io"]}
+wasm-bindgen-futures = "0.4.37"
+serio = "0.1"
+futures-sink = "0.3"
+bytes = "1"
+async_io_stream = {version = "^0.3", features = ["tokio_io"]}
+tokio = {version = "1", default-features = false, features = [
+  "rt",
+  "macros",
+]}
+tokio-util= {version = "0.7", features = ["compat", "io-util"]}
