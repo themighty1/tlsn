@@ -1,6 +1,10 @@
 [workspace]
 members = [
-    "crates/benches",
+    "crates/benches/binary",
+    "crates/benches/browser-prover-core",
+    "crates/benches/browser-prover-native",
+    "crates/benches/browser-prover-wasm",
+    "crates/benches/library",
     "crates/common",
     "crates/components/aead",
     "crates/components/block-cipher",

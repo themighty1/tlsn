@@ -1,0 +1,74 @@
+[package]
+edition = "2021"
+name = "tlsn-benches-library"
+publish = false
+version = "0.0.0"
+
+# Adding an empty workspace to exclude this package from a rust workspace.
+# [workspace]
+
+[dependencies]
+tlsn-server-fixture = { path = "../../server-fixture", default-features = false, features = ["fixtures"] }
+tlsn-core = { path = "../../core" }
+tlsn-tls-core = { path = "../../tls/core" }
+tlsn-prover = { path = "../../prover"}
+
+elliptic-curve = { version = "0.13.5", features = ["pkcs8"] }
+futures = { version = "0.3", features = ["compat"] }
+futures-util = "0.3.28"
+p256 = { version = "0.13", features = ["pem", "ecdsa"] }
+rayon = "1.5"
+serde = { version = "1.0.147", features = ["derive"] }
+serde_json = "1.0"
+tracing = "0.1"
+url = { version = "2.0", features = ["serde"] }
+pin-project-lite = "0.2.4"
+anyhow = "1.0"
+csv = "1.3.0"
+toml = "0.8.11"
+tracing-subscriber = { version = "0.3", features = ["env-filter"]}
+env_logger = { version = "0.6.0", default-features = false }
+log = {version="0.4.1", default-features = false, features=["release_max_level_debug"]}
+web-time = "1.0"
+async-trait = "0.1.81"
+tungstenite = "0.23.0"
+cfg-if = "1.0"
+tokio-tungstenite-wasm = "0.3.1"
+# Use the patched ws_stream_wasm to fix the issue https://github.com/najamelan/ws_stream_wasm/issues/12#issuecomment-1711902958
+ws_stream_wasm = { version = "0.7.4", git = "https://github.com/tlsnotary/ws_stream_wasm", rev = "2ed12aad9f0236e5321f577672f309920b2aef51", features = ["tokio_io"]}
+wasm-bindgen-futures = "0.4.37"
+
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+tokio = {version = "1", default-features = false, features = [
+  "rt",
+  "macros",
+]}
+tokio-util= {version = "0.7", features = ["compat"]}
+wasm-bindgen = "0.2.87"
+serde-wasm-bindgen = "0.6.1"
+getrandom = { version = "0.2", features = ["js"] }
+js-sys = "0.3.64"
+
+
+[target.'cfg(target_arch = "wasm32")'.patch.crates-io]
+tokio = { path = "../../../tokio/tokio" }
+
+
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tokio = {version = "1", default-features = false, features = [
+  "rt",
+  "rt-multi-thread",
+  "macros",
+  "net",
+  "io-std",
+  "fs",
+]}
+tokio-util= {version = "0.7", features = ["compat", "io"]}
+async_io_stream = { version = "^0.3", features = ["map_pharos", "tokio_io"] }
+tokio-tungstenite = "0.23.1"
+charming = {version = "0.3.1", features = ["ssr"]}
+#tlsn-server-fixture = { path = "../../tlsn-server-fixture" }
+
+

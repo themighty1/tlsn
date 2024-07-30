@@ -19,11 +19,30 @@ sudo apt-get install iproute2 -y
 
 Running the benches requires root privileges because they will set up virtual interfaces. The script is designed to fully clean up when the benches are done, but run them at your own risk.
 
+#### Native benches
+
 Make sure you're in the `tlsn/benches/` directory, build the binaries then run the script:
 
 ```sh
+cd binary
 cargo build --release
 sudo ./bench.sh
+```
+
+#### Browser benches
+
+Make sure you're in the `tlsn/benches/` directory, install dependencies, build the wasm module, build the binaries, and then run the script:
+```sh
+cargo install websocat
+wget -P /tmp/chrome-linux64 https://storage.googleapis.com/chrome-for-testing-public/121.0.6167.85/linux64/chrome-linux64.zip
+unzip /tmp/chrome-linux64/chrome-linux64.zip -d /tmp/
+
+cd browser-prover-wasm
+rustup run nightly wasm-pack build --release --target web
+cd ../binary
+cargo build --release --features browser-bench
+# We need to pass the user's HOME, so the binary could find websocat.
+sudo env HOME="$HOME" CHROME_PATH=/tmp/chrome-linux64/chrome ./bench.sh
 ```
 
 ## Metrics

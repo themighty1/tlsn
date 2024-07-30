@@ -8,41 +8,54 @@ use std::{
 };
 
 use anyhow::Context;
-use futures::{AsyncReadExt, AsyncWriteExt};
 use tlsn_benches::{
     config::{BenchInstance, Config},
     metrics::Metrics,
     set_interface, PROVER_INTERFACE,
 };
+use tlsn_benches_library::ProverTrait;
 
 use tlsn_core::Direction;
 use tlsn_server_fixture::{CA_CERT_DER, SERVER_DOMAIN};
-use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::{
+    io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, DuplexStream},
+    net::{TcpListener, TcpStream},
+    time::{sleep, Duration},
+};
 use tokio_util::{
     compat::TokioAsyncReadCompatExt,
     io::{InspectReader, InspectWriter},
 };
 
-use tlsn_prover::tls::{Prover, ProverConfig};
+use cfg_if::cfg_if;
 use tracing_subscriber::{fmt::format::FmtSpan, EnvFilter};
+
+#[cfg(not(feature = "browser-bench"))]
+use tlsn_benches::prover::NativeProver as Prover;
+#[cfg(feature = "browser-bench")]
+use tlsn_benches_browser_prover_native::BrowserProver as Prover;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    env_logger::init();
+
     let config_path = std::env::var("CFG").unwrap_or_else(|_| "bench.toml".to_string());
     let config: Config = toml::from_str(
         &std::fs::read_to_string(config_path).context("failed to read config file")?,
     )
     .context("failed to parse config")?;
 
-    tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::from_default_env())
-        .with_span_events(FmtSpan::NEW | FmtSpan::CLOSE)
-        .init();
+    // TODO: this block was panicking, needs fixing
+    // tracing_subscriber::fmt()
+    //     .with_env_filter(EnvFilter::from_default_env())
+    //     .with_span_events(FmtSpan::NEW | FmtSpan::CLOSE)
+    //     .init();
 
     let ip = std::env::var("VERIFIER_IP").unwrap_or_else(|_| "10.10.1.1".to_string());
+    //let ip = std::env::var("VERIFIER_IP").unwrap_or_else(|_| "127.0.0.1".to_string());
     let port: u16 = std::env::var("VERIFIER_PORT")
         .map(|port| port.parse().expect("port is valid u16"))
-        .unwrap_or(8000);
+        .unwrap_or(8123);
     let verifier_host = (ip.as_str(), port);
 
     let mut file = std::fs::OpenOptions::new()
@@ -110,54 +123,22 @@ async fn run_instance<S: AsyncWrite + AsyncRead + Send + Sync + Unpin + 'static>
 
     set_interface(PROVER_INTERFACE, upload, 1, upload_delay)?;
 
-    let (client_conn, server_conn) = tokio::io::duplex(2 << 16);
+    let (client_conn, server_conn) = tokio::io::duplex(1 << 16);
+
     tokio::spawn(tlsn_server_fixture::bind(server_conn.compat()));
 
-    let start_time = Instant::now();
+    println!("running prover");
 
-    let prover = Prover::new(
-        ProverConfig::builder()
-            .id("test")
-            .server_dns(SERVER_DOMAIN)
-            .root_cert_store(root_store())
-            .max_sent_data(upload_size + 256)
-            .max_recv_data(download_size + 256)
-            .build()
-            .context("invalid prover config")?,
-    )
-    .setup(io.compat())
-    .await?;
-
-    let (mut mpc_tls_connection, prover_fut) = prover.connect(client_conn.compat()).await.unwrap();
-
-    let prover_ctrl = prover_fut.control();
-    let prover_task = tokio::spawn(prover_fut);
-
-    let request = format!(
-        "GET /bytes?size={} HTTP/1.1\r\nConnection: close\r\nData: {}\r\n\r\n",
+    let mut prover = Prover::setup(
+        upload_size,
         download_size,
-        String::from_utf8(vec![0x42u8; upload_size]).unwrap(),
-    );
+        defer_decryption,
+        io,
+        client_conn,
+    )
+    .await;
 
-    if defer_decryption {
-        prover_ctrl.defer_decryption().await?;
-    }
-
-    mpc_tls_connection.write_all(request.as_bytes()).await?;
-    mpc_tls_connection.close().await?;
-
-    let mut response = vec![];
-    mpc_tls_connection.read_to_end(&mut response).await?;
-
-    let mut prover = prover_task.await??.start_prove();
-
-    prover.reveal(0..prover.sent_transcript().data().len(), Direction::Sent)?;
-    prover.reveal(
-        0..prover.recv_transcript().data().len(),
-        Direction::Received,
-    )?;
-    prover.prove().await?;
-    prover.finalize().await?;
+    let runtime = prover.run().await;
 
     Ok(Metrics {
         name,
@@ -168,16 +149,8 @@ async fn run_instance<S: AsyncWrite + AsyncRead + Send + Sync + Unpin + 'static>
         upload_size,
         download_size,
         defer_decryption,
-        runtime: Instant::now().duration_since(start_time).as_secs(),
+        runtime,
         uploaded: uploaded.load(Ordering::SeqCst),
         downloaded: downloaded.load(Ordering::SeqCst),
     })
-}
-
-fn root_store() -> tls_core::anchors::RootCertStore {
-    let mut root_store = tls_core::anchors::RootCertStore::empty();
-    root_store
-        .add(&tls_core::key::Certificate(CA_CERT_DER.to_vec()))
-        .unwrap();
-    root_store
 }

@@ -1,0 +1,84 @@
+[package]
+edition = "2021"
+name = "tlsn-benches-browser-prover-wasm"
+publish = false
+version = "0.0.0"
+
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+# Adding an empty workspace to exclude this package from a rust workspace.
+# [workspace]
+
+[dependencies]
+futures = { version = "0.3", features = ["compat"] }
+futures-util = "0.3.28"
+rayon = "1.5"
+serde = { version = "1.0.147", features = ["derive"] }
+serde_json = "1.0"
+tracing = "0.1"
+pin-project-lite = "0.2.4"
+anyhow = "1.0"
+
+tlsn-benches-library = { path = "../library"}
+tlsn-benches-browser-prover-core = { path = "../browser-prover-core"}
+
+log = {version="0.4.1", default-features = false, features=["release_max_level_debug"]}
+web-time = "1.0"
+
+async-trait = "0.1.81"
+
+cfg-if = "1.0"
+# Use the patched ws_stream_wasm to fix the issue https://github.com/najamelan/ws_stream_wasm/issues/12#issuecomment-1711902958
+ws_stream_wasm = { version = "0.7.4", git = "https://github.com/tlsnotary/ws_stream_wasm", rev = "2ed12aad9f0236e5321f577672f309920b2aef51", features = ["tokio_io"]}
+wasm-bindgen-futures = "0.4.37"
+
+serio = "0.1"
+futures-sink = "0.3"
+bytes = "1"
+async_io_stream = {version = "^0.3", features = ["tokio_io"]}
+
+wasm-bindgen-rayon = { version = "1", features = ["no-bundler"] }
+tokio-util= {version = "0.7", features = ["compat", "io-util"]}
+wasm-bindgen = "0.2.87"
+serde-wasm-bindgen = "0.6.1"
+getrandom = { version = "0.2", features = ["js"] }
+js-sys = "0.3.64"
+web-sys = { version = "0.3.4", features = [
+  "BinaryType",
+  "Blob",
+  "ErrorEvent",
+  "FileReader",
+  "MessageEvent",
+  "ProgressEvent",
+  "WebSocket",
+  "console",
+  'Document',
+  'HtmlElement',
+  'HtmlInputElement',
+  'Window',
+  'Worker',
+  'Headers',
+  'Request',
+  'RequestInit',
+  'RequestMode',
+  'Response',
+] }
+time = { version = "0.3.34", features = ["wasm-bindgen"] }
+strum = { version = "0.26.1" }
+strum_macros = "0.26.1"
+tracing-subscriber = { version = "0.3", features = ["time","env-filter"] }
+tracing-web = "0.1.2"
+console_error_panic_hook = { version = "0.1.7" }
+tokio = {version = "1", default-features = false, features = [
+  "rt",
+  "macros",
+]}
+
+
+parking_lot = { version = "0.12", features = ["nightly"] }
+
+
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = false

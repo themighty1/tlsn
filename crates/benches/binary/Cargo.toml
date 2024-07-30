@@ -1,0 +1,77 @@
+[package]
+edition = "2021"
+name = "tlsn-benches"
+publish = false
+version = "0.0.0"
+
+[features]
+default = []
+browser-bench = []
+
+[dependencies]
+tlsn-benches-library = {path = "../library"}
+tlsn-benches-browser-prover-native = {path = "../browser-prover-native"}
+tlsn-core.workspace = true
+tlsn-tls-core.workspace = true
+tlsn-prover = { workspace = true}
+tlsn-server-fixture = { path = "../../server-fixture" }
+
+elliptic-curve = { version = "0.13.5", features = ["pkcs8"] }
+futures = { version = "0.3", features = ["compat"] }
+futures-util = "0.3.28"
+p256 = { version = "0.13", features = ["pem", "ecdsa"] }
+rayon = "1.5"
+serde = { version = "1.0.147", features = ["derive"] }
+serde_json = "1.0"
+tracing = "0.1"
+url = { version = "2.0", features = ["serde"] }
+pin-project-lite = "0.2.4"
+anyhow = "1.0"
+csv = "1.3.0"
+async-trait = "0.1.81"
+toml = "0.8.11"
+tracing-subscriber = {workspace = true, features = ["env-filter"]}
+env_logger = { version = "0.6.0", default-features = false }
+log = {version="0.4.1", default-features = false, features=["release_max_level_debug"]}
+web-time = "1.0"
+tungstenite = "0.23.0"
+cfg-if = "1.0"
+tokio-tungstenite-wasm = "0.3.1"
+# Use the patched ws_stream_wasm to fix the issue https://github.com/najamelan/ws_stream_wasm/issues/12#issuecomment-1711902958
+ws_stream_wasm = { version = "0.7.4", git = "https://github.com/tlsnotary/ws_stream_wasm", rev = "2ed12aad9f0236e5321f577672f309920b2aef51", features = ["tokio_io"]}
+wasm-bindgen-futures = "0.4.37"
+tokio = {version = "1", default-features = false, features = [
+  "rt",
+  "rt-multi-thread",
+  "macros",
+  "net",
+  "io-std",
+  "fs",
+]}
+tokio-util= {workspace = true, features = ["compat", "io"]}
+async_io_stream = { version = "^0.3", features = ["map_pharos", "tokio_io"] }
+tokio-tungstenite = "0.23.1"
+tlsn-verifier.workspace = true
+charming = {version = "0.3.1", features = ["ssr"]}
+
+
+
+[[bin]]
+name = "bench"
+path = "bin/bench.rs"
+
+[[bin]]
+name = "prover"
+path = "bin/prover.rs"
+
+[[bin]]
+name = "verifier"
+path = "bin/verifier.rs"
+
+[[bin]]
+name = "plot"
+path = "bin/plot.rs"
+
+
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = false
