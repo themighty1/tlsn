@@ -32,5 +32,5 @@ wasm-bindgen-rayon = { version = "1", features = ["no-bundler"] }
 
 [package.metadata.wasm-pack.profile.release]
 # Note: wasm-pack options should match those used in crates/wasm/Cargo.toml
-opt-level = "z" 
-wasm-opt = true
+# opt-level = "z" 
+wasm-opt = false
