@@ -100,8 +100,8 @@ pub async fn main(
 
     let start_time = Instant::now();
     run_prover(
-        cfg.upload_size as usize,
-        cfg.download_size as usize,
+        cfg.upload_size,
+        cfg.download_size,
         cfg.defer_decryption,
         Box::new(verifier_io),
         Box::new(server_io),
