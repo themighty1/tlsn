@@ -265,11 +265,7 @@ async fn spawn_browser(
                     window.worker.run("{}", {}, {}, {}, {});
                 }}
             "#,
-            ws_ip.to_string(),
-            ws_port,
-            wasm_to_server_port,
-            wasm_to_verifier_port,
-            wasm_to_native_port
+            ws_ip, ws_port, wasm_to_server_port, wasm_to_verifier_port, wasm_to_native_port
         ))
         .await?;
 

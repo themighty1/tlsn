@@ -11,8 +11,8 @@ use tlsn_benches_browser_core::{
 };
 use tlsn_benches_library::run_prover;
 
-use anyhow;
-use console_error_panic_hook;
+use anyhow::Result;
+use console_error_panic_hook::hook;
 use tracing::{debug, error};
 use tracing_subscriber::{
     fmt::{format::Pretty, time::UtcTime},
@@ -21,14 +21,15 @@ use tracing_subscriber::{
 };
 use tracing_web::{performance_layer, MakeWebConsoleWriter};
 use wasm_bindgen::prelude::*;
+#[cfg(target_arch = "wasm32")]
 pub use wasm_bindgen_rayon::init_thread_pool;
-use web_sys;
+use web_sys::console;
 use web_time::Instant;
 use ws_stream_wasm::WsMeta;
 
 macro_rules! log {
     ( $( $t:tt )* ) => {
-        web_sys::console::log_1(&format!( $( $t )* ).into());
+        console::log_1(&format!( $( $t )* ).into());
     }
 }
 
@@ -58,7 +59,7 @@ pub async fn main(
     wasm_to_server_port: u16,
     wasm_to_verifier_port: u16,
     wasm_to_native_port: u16,
-) -> anyhow::Result<()> {
+) -> Result<()> {
     log!("starting main");
 
     // Connect to the server.
@@ -137,7 +138,7 @@ pub fn setup_tracing_web(logging_filter: &str) {
     // https://github.com/rustwasm/console_error_panic_hook
     panic::set_hook(Box::new(|info| {
         error!("panic occurred: {:?}", info);
-        console_error_panic_hook::hook(info);
+        hook(info);
     }));
 
     debug!("🪵 Logging set up 🪵")
