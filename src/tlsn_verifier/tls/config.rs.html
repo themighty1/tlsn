@@ -1,4 +1,4 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `tlsn-verifier/src/tls/config.rs`."><title>config.rs - source</title><link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/SourceSerif4-Regular-46f98efaafac5295.ttf.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/FiraSans-Regular-018c141bf0843ffd.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/FiraSans-Medium-8f9a781e4970d388.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/SourceCodePro-Regular-562dcc5011b6de7d.ttf.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/SourceCodePro-Semibold-d899c5a5c4aeb14a.ttf.woff2"><link rel="stylesheet" href="../../../static.files/normalize-76eba96aa4d2e634.css"><link rel="stylesheet" href="../../../static.files/rustdoc-9ee3a5e31a2afa3e.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="tlsn_verifier" data-themes="" data-resource-suffix="" data-rustdoc-version="1.75.0 (82e1608df 2023-12-21)" data-channel="1.75.0" data-search-js="search-8fbf244ebcf71464.js" data-settings-js="settings-74424d7eec62a23e.js" ><script src="../../../static.files/storage-fec3eaa3851e447d.js"></script><script defer src="../../../static.files/src-script-3280b574d94e47b4.js"></script><script defer src="../../../src-files.js"></script><script defer src="../../../static.files/main-9dd44ab47b99a0fb.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-5d8b3c7633ad77ba.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-16x16-8b506e7a72182f1c.png"><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-422f7d1d52889060.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-2c020d218678b618.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"></nav><main><nav class="sub"><form class="search-form"><span></span><input class="search-input" name="search" aria-label="Run search in the documentation" autocomplete="off" spellcheck="false" placeholder="Click or press ‘S’ to search, ‘?’ for more options…" type="search"><div id="help-button" title="help" tabindex="-1"><a href="../../../help.html">?</a></div><div id="settings-menu" tabindex="-1"><a href="../../../settings.html" title="settings"><img width="22" height="22" alt="Change settings" src="../../../static.files/wheel-7b819b6101059cd0.svg"></a></div></form></nav><section id="main-content" class="content"><div class="example-wrap"><div data-nosnippet><pre class="src-line-numbers"><a href="#1" id="1">1</a>
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `crates/verifier/src/tls/config.rs`."><title>config.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-46f98efaafac5295.ttf.woff2,FiraSans-Regular-018c141bf0843ffd.woff2,FiraSans-Medium-8f9a781e4970d388.woff2,SourceCodePro-Regular-562dcc5011b6de7d.ttf.woff2,SourceCodePro-Semibold-d899c5a5c4aeb14a.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-76eba96aa4d2e634.css"><link rel="stylesheet" href="../../../static.files/rustdoc-dd39b87e5fcfba68.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="tlsn_verifier" data-themes="" data-resource-suffix="" data-rustdoc-version="1.80.1 (3f5fd8dd4 2024-08-06)" data-channel="1.80.1" data-search-js="search-d52510db62a78183.js" data-settings-js="settings-4313503d2e1961c2.js" ><script src="../../../static.files/storage-118b08c4c78b968e.js"></script><script defer src="../../../static.files/src-script-e66d777a5a92e9b2.js"></script><script defer src="../../../src-files.js"></script><script defer src="../../../static.files/main-20a3ad099b048cf2.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-df360f571f6edeae.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-422f7d1d52889060.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-2c020d218678b618.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer"></div><main><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="example-wrap"><div data-nosnippet><pre class="src-line-numbers"><a href="#1" id="1">1</a>
 <a href="#2" id="2">2</a>
 <a href="#3" id="3">3</a>
 <a href="#4" id="4">4</a>
@@ -112,53 +112,49 @@
 <a href="#112" id="112">112</a>
 <a href="#113" id="113">113</a>
 <a href="#114" id="114">114</a>
-<a href="#115" id="115">115</a>
-<a href="#116" id="116">116</a>
-<a href="#117" id="117">117</a>
-<a href="#118" id="118">118</a>
-<a href="#119" id="119">119</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>mpz_ot::{chou_orlandi, kos};
-<span class="kw">use </span>mpz_share_conversion::{ReceiverConfig, SenderConfig};
 <span class="kw">use </span>std::fmt::{Debug, Formatter, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>tls_core::verify::{ServerCertVerifier, WebPkiVerifier};
-<span class="kw">use </span>tls_mpc::{MpcTlsCommonConfig, MpcTlsFollowerConfig};
+<span class="kw">use </span>tls_mpc::{MpcTlsCommonConfig, MpcTlsFollowerConfig, TranscriptConfig};
+<span class="kw">use </span>tlsn_common::config::{ProtocolConfig, ProtocolConfigValidator};
 <span class="kw">use </span>tlsn_core::proof::default_cert_verifier;
 
-<span class="kw">const </span>DEFAULT_MAX_TRANSCRIPT_SIZE: usize = <span class="number">1 </span>&lt;&lt; <span class="number">14</span>; <span class="comment">// 16Kb
-
-</span><span class="doccomment">/// Configuration for the [`Verifier`](crate::tls::Verifier)
+<span class="doccomment">/// Configuration for the [`Verifier`](crate::tls::Verifier).
 </span><span class="attr">#[allow(missing_docs)]
 #[derive(derive_builder::Builder)]
-#[builder(pattern = <span class="string">&quot;owned&quot;</span>)]
+#[builder(pattern = <span class="string">"owned"</span>)]
 </span><span class="kw">pub struct </span>VerifierConfig {
     <span class="attr">#[builder(setter(into))]
     </span>id: String,
-
-    <span class="doccomment">/// Maximum transcript size in bytes
-    ///
-    /// This includes the number of bytes sent and received to the server.
-    </span><span class="attr">#[builder(default = <span class="string">&quot;DEFAULT_MAX_TRANSCRIPT_SIZE&quot;</span>)]
-    </span>max_transcript_size: usize,
+    <span class="attr">#[builder(default)]
+    </span>protocol_config_validator: ProtocolConfigValidator,
     <span class="attr">#[builder(
-        pattern = <span class="string">&quot;owned&quot;</span>,
+        pattern = <span class="string">"owned"</span>,
         setter(strip_option),
-        default = <span class="string">&quot;Some(default_cert_verifier())&quot;
+        default = <span class="string">"Some(default_cert_verifier())"
     </span>)]
     </span>cert_verifier: <span class="prelude-ty">Option</span>&lt;WebPkiVerifier&gt;,
 }
 
 <span class="kw">impl </span>Debug <span class="kw">for </span>VerifierConfig {
-    <span class="kw">fn </span>fmt(<span class="kw-2">&amp;</span><span class="self">self</span>, f: <span class="kw-2">&amp;mut </span>Formatter&lt;<span class="lifetime">&#39;_</span>&gt;) -&gt; <span class="prelude-ty">Result </span>{
-        f.debug_struct(<span class="string">&quot;VerifierConfig&quot;</span>)
-            .field(<span class="string">&quot;id&quot;</span>, <span class="kw-2">&amp;</span><span class="self">self</span>.id)
-            .field(<span class="string">&quot;max_transcript_size&quot;</span>, <span class="kw-2">&amp;</span><span class="self">self</span>.max_transcript_size)
-            .field(<span class="string">&quot;cert_verifier&quot;</span>, <span class="kw-2">&amp;</span><span class="string">&quot;_&quot;</span>)
+    <span class="kw">fn </span>fmt(<span class="kw-2">&amp;</span><span class="self">self</span>, f: <span class="kw-2">&amp;mut </span>Formatter&lt;<span class="lifetime">'_</span>&gt;) -&gt; <span class="prelude-ty">Result </span>{
+        f.debug_struct(<span class="string">"VerifierConfig"</span>)
+            .field(<span class="string">"id"</span>, <span class="kw-2">&amp;</span><span class="self">self</span>.id)
+            .field(
+                <span class="string">"max_sent_data"</span>,
+                <span class="kw-2">&amp;</span><span class="self">self</span>.protocol_config_validator.max_sent_data(),
+            )
+            .field(
+                <span class="string">"max_recv_data"</span>,
+                <span class="kw-2">&amp;</span><span class="self">self</span>.protocol_config_validator.max_recv_data(),
+            )
+            .field(<span class="string">"cert_verifier"</span>, <span class="kw-2">&amp;</span><span class="string">"_"</span>)
             .finish()
     }
 }
 
 <span class="kw">impl </span>VerifierConfig {
-    <span class="doccomment">/// Create a new configuration builder.
+    <span class="doccomment">/// Creates a new configuration builder.
     </span><span class="kw">pub fn </span>builder() -&gt; VerifierConfigBuilder {
         VerifierConfigBuilder::default()
     }
@@ -168,16 +164,16 @@
         <span class="kw-2">&amp;</span><span class="self">self</span>.id
     }
 
-    <span class="doccomment">/// Get the maximum transcript size in bytes.
-    </span><span class="kw">pub fn </span>max_transcript_size(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
-        <span class="self">self</span>.max_transcript_size
+    <span class="doccomment">/// Returns the protocol configuration validator.
+    </span><span class="kw">pub fn </span>protocol_config_validator(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>ProtocolConfigValidator {
+        <span class="kw-2">&amp;</span><span class="self">self</span>.protocol_config_validator
     }
 
-    <span class="doccomment">/// Get the certificate verifier.
+    <span class="doccomment">/// Returns the certificate verifier.
     </span><span class="kw">pub fn </span>cert_verifier(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span><span class="kw">impl </span>ServerCertVerifier {
         <span class="self">self</span>.cert_verifier
             .as_ref()
-            .expect(<span class="string">&quot;Certificate verifier should be set&quot;</span>)
+            .expect(<span class="string">"Certificate verifier should be set"</span>)
     }
 
     <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>build_base_ot_sender_config(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; chou_orlandi::SenderConfig {
@@ -202,36 +198,30 @@
         kos::ReceiverConfig::default()
     }
 
-    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>build_mpc_tls_config(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; MpcTlsFollowerConfig {
+    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>build_mpc_tls_config(
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
+        protocol_config: <span class="kw-2">&amp;</span>ProtocolConfig,
+    ) -&gt; MpcTlsFollowerConfig {
         MpcTlsFollowerConfig::builder()
             .common(
                 MpcTlsCommonConfig::builder()
-                    .id(<span class="macro">format!</span>(<span class="string">&quot;{}/mpc_tls&quot;</span>, <span class="kw-2">&amp;</span><span class="self">self</span>.id))
-                    .max_transcript_size(<span class="self">self</span>.max_transcript_size)
+                    .id(<span class="macro">format!</span>(<span class="string">"{}/mpc_tls"</span>, <span class="kw-2">&amp;</span><span class="self">self</span>.id))
+                    .tx_config(
+                        TranscriptConfig::default_tx()
+                            .max_size(protocol_config.max_sent_data())
+                            .build()
+                            .unwrap(),
+                    )
+                    .rx_config(
+                        TranscriptConfig::default_rx()
+                            .max_size(protocol_config.max_recv_data())
+                            .build()
+                            .unwrap(),
+                    )
                     .handshake_commit(<span class="bool-val">true</span>)
                     .build()
                     .unwrap(),
             )
-            .build()
-            .unwrap()
-    }
-
-    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>ot_count(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
-        <span class="self">self</span>.max_transcript_size * <span class="number">8
-    </span>}
-
-    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>build_p256_sender_config(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; SenderConfig {
-        SenderConfig::builder().id(<span class="string">&quot;p256/1&quot;</span>).build().unwrap()
-    }
-
-    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>build_p256_receiver_config(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; ReceiverConfig {
-        ReceiverConfig::builder().id(<span class="string">&quot;p256/0&quot;</span>).build().unwrap()
-    }
-
-    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>build_gf2_config(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; ReceiverConfig {
-        ReceiverConfig::builder()
-            .id(<span class="string">&quot;gf2&quot;</span>)
-            .record()
             .build()
             .unwrap()
     }

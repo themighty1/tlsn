@@ -1,4 +1,4 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `tlsn-verifier/src/tls/mod.rs`."><title>mod.rs - source</title><link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/SourceSerif4-Regular-46f98efaafac5295.ttf.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/FiraSans-Regular-018c141bf0843ffd.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/FiraSans-Medium-8f9a781e4970d388.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/SourceCodePro-Regular-562dcc5011b6de7d.ttf.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/SourceCodePro-Semibold-d899c5a5c4aeb14a.ttf.woff2"><link rel="stylesheet" href="../../../static.files/normalize-76eba96aa4d2e634.css"><link rel="stylesheet" href="../../../static.files/rustdoc-9ee3a5e31a2afa3e.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="tlsn_verifier" data-themes="" data-resource-suffix="" data-rustdoc-version="1.75.0 (82e1608df 2023-12-21)" data-channel="1.75.0" data-search-js="search-8fbf244ebcf71464.js" data-settings-js="settings-74424d7eec62a23e.js" ><script src="../../../static.files/storage-fec3eaa3851e447d.js"></script><script defer src="../../../static.files/src-script-3280b574d94e47b4.js"></script><script defer src="../../../src-files.js"></script><script defer src="../../../static.files/main-9dd44ab47b99a0fb.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-5d8b3c7633ad77ba.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-16x16-8b506e7a72182f1c.png"><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-422f7d1d52889060.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-2c020d218678b618.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"></nav><main><nav class="sub"><form class="search-form"><span></span><input class="search-input" name="search" aria-label="Run search in the documentation" autocomplete="off" spellcheck="false" placeholder="Click or press ‘S’ to search, ‘?’ for more options…" type="search"><div id="help-button" title="help" tabindex="-1"><a href="../../../help.html">?</a></div><div id="settings-menu" tabindex="-1"><a href="../../../settings.html" title="settings"><img width="22" height="22" alt="Change settings" src="../../../static.files/wheel-7b819b6101059cd0.svg"></a></div></form></nav><section id="main-content" class="content"><div class="example-wrap"><div data-nosnippet><pre class="src-line-numbers"><a href="#1" id="1">1</a>
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `crates/verifier/src/tls/mod.rs`."><title>mod.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-46f98efaafac5295.ttf.woff2,FiraSans-Regular-018c141bf0843ffd.woff2,FiraSans-Medium-8f9a781e4970d388.woff2,SourceCodePro-Regular-562dcc5011b6de7d.ttf.woff2,SourceCodePro-Semibold-d899c5a5c4aeb14a.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-76eba96aa4d2e634.css"><link rel="stylesheet" href="../../../static.files/rustdoc-dd39b87e5fcfba68.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="tlsn_verifier" data-themes="" data-resource-suffix="" data-rustdoc-version="1.80.1 (3f5fd8dd4 2024-08-06)" data-channel="1.80.1" data-search-js="search-d52510db62a78183.js" data-settings-js="settings-4313503d2e1961c2.js" ><script src="../../../static.files/storage-118b08c4c78b968e.js"></script><script defer src="../../../static.files/src-script-e66d777a5a92e9b2.js"></script><script defer src="../../../src-files.js"></script><script defer src="../../../static.files/main-20a3ad099b048cf2.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-df360f571f6edeae.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-422f7d1d52889060.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-2c020d218678b618.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer"></div><main><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="example-wrap"><div data-nosnippet><pre class="src-line-numbers"><a href="#1" id="1">1</a>
 <a href="#2" id="2">2</a>
 <a href="#3" id="3">3</a>
 <a href="#4" id="4">4</a>
@@ -337,104 +337,143 @@
 <a href="#337" id="337">337</a>
 <a href="#338" id="338">338</a>
 <a href="#339" id="339">339</a>
-</pre></div><pre class="rust"><code><span class="doccomment">//! TLS Verifier
+<a href="#340" id="340">340</a>
+<a href="#341" id="341">341</a>
+<a href="#342" id="342">342</a>
+<a href="#343" id="343">343</a>
+<a href="#344" id="344">344</a>
+<a href="#345" id="345">345</a>
+<a href="#346" id="346">346</a>
+<a href="#347" id="347">347</a>
+<a href="#348" id="348">348</a>
+<a href="#349" id="349">349</a>
+<a href="#350" id="350">350</a>
+<a href="#351" id="351">351</a>
+<a href="#352" id="352">352</a>
+<a href="#353" id="353">353</a>
+<a href="#354" id="354">354</a>
+<a href="#355" id="355">355</a>
+<a href="#356" id="356">356</a>
+<a href="#357" id="357">357</a>
+<a href="#358" id="358">358</a>
+<a href="#359" id="359">359</a>
+<a href="#360" id="360">360</a>
+<a href="#361" id="361">361</a>
+<a href="#362" id="362">362</a>
+</pre></div><pre class="rust"><code><span class="doccomment">//! TLS Verifier.
 
 </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>config;
 <span class="kw">mod </span>error;
-<span class="kw">mod </span>future;
 <span class="kw">mod </span>notarize;
 <span class="kw">pub mod </span>state;
 <span class="kw">mod </span>verify;
 
 <span class="kw">pub use </span>config::{VerifierConfig, VerifierConfigBuilder, VerifierConfigBuilderError};
 <span class="kw">pub use </span>error::VerifierError;
+<span class="kw">use </span>mpz_common::Allocate;
+<span class="kw">use </span>serio::{stream::IoStreamExt, StreamExt};
+<span class="kw">use </span>uid_mux::FramedUidMux;
 
-<span class="kw">use crate</span>::{tls::future::OTFuture, Mux};
-<span class="kw">use </span>future::MuxFuture;
-<span class="kw">use </span>futures::{
-    stream::{SplitSink, SplitStream},
-    AsyncRead, AsyncWrite, FutureExt, StreamExt, TryFutureExt,
-};
-<span class="kw">use </span>mpz_garble::{config::Role <span class="kw">as </span>GarbleRole, protocol::deap::DEAPVm};
-<span class="kw">use </span>mpz_ot::{
-    actor::kos::{
-        msgs::Message <span class="kw">as </span>ActorMessage, ReceiverActor, SenderActor, SharedReceiver, SharedSender,
-    },
-    chou_orlandi, kos,
-};
-<span class="kw">use </span>mpz_share_conversion <span class="kw">as </span>ff;
+<span class="kw">use </span>web_time::{SystemTime, UNIX_EPOCH};
+
+<span class="kw">use </span>futures::{AsyncRead, AsyncWrite, TryFutureExt};
+<span class="kw">use </span>mpz_garble::config::Role <span class="kw">as </span>DEAPRole;
+<span class="kw">use </span>mpz_ot::{chou_orlandi, kos};
 <span class="kw">use </span>rand::Rng;
 <span class="kw">use </span>signature::Signer;
 <span class="kw">use </span>state::{Notarize, Verify};
-<span class="kw">use </span>std::time::{SystemTime, UNIX_EPOCH};
-<span class="kw">use </span>tls_mpc::{setup_components, MpcTlsFollower, TlsRole};
+<span class="kw">use </span>tls_mpc::{build_components, MpcTlsFollower, MpcTlsFollowerData, TlsRole};
+<span class="kw">use </span>tlsn_common::{
+    config::ProtocolConfig,
+    mux::{attach_mux, MuxControl},
+    DEAPThread, Executor, OTReceiver, OTSender, Role,
+};
 <span class="kw">use </span>tlsn_core::{proof::SessionInfo, RedactedTranscript, SessionHeader, Signature};
-<span class="kw">use </span>uid_mux::{yamux, UidYamux};
-<span class="kw">use </span>utils_aio::{codec::BincodeMux, duplex::Duplex, mux::MuxChannel};
 
-<span class="attr">#[cfg(feature = <span class="string">&quot;tracing&quot;</span>)]
-</span><span class="kw">use </span>tracing::{debug, info, instrument};
-
-<span class="kw">type </span>OTSenderActor = SenderActor&lt;
-    chou_orlandi::Receiver,
-    SplitSink&lt;
-        Box&lt;<span class="kw">dyn </span>Duplex&lt;ActorMessage&lt;chou_orlandi::msgs::Message&gt;&gt;&gt;,
-        ActorMessage&lt;chou_orlandi::msgs::Message&gt;,
-    &gt;,
-    SplitStream&lt;Box&lt;<span class="kw">dyn </span>Duplex&lt;ActorMessage&lt;chou_orlandi::msgs::Message&gt;&gt;&gt;&gt;,
-&gt;;
+<span class="kw">use </span>tracing::{debug, info, info_span, instrument, Span};
 
 <span class="doccomment">/// A Verifier instance.
 </span><span class="kw">pub struct </span>Verifier&lt;T: state::VerifierState&gt; {
     config: VerifierConfig,
+    span: Span,
     state: T,
 }
 
 <span class="kw">impl </span>Verifier&lt;state::Initialized&gt; {
-    <span class="doccomment">/// Create a new verifier.
+    <span class="doccomment">/// Creates a new verifier.
     </span><span class="kw">pub fn </span>new(config: VerifierConfig) -&gt; <span class="self">Self </span>{
+        <span class="kw">let </span>span = <span class="macro">info_span!</span>(<span class="string">"verifier"</span>, id = config.id());
         <span class="self">Self </span>{
             config,
+            span,
             state: state::Initialized,
         }
     }
 
-    <span class="doccomment">/// Set up the verifier.
+    <span class="doccomment">/// Sets up the verifier.
     ///
     /// This performs all MPC setup.
     ///
     /// # Arguments
     ///
     /// * `socket` - The socket to the prover.
-    </span><span class="kw">pub async fn </span>setup&lt;S: AsyncWrite + AsyncRead + Send + Unpin + <span class="lifetime">&#39;static</span>&gt;(
+    </span><span class="attr">#[instrument(parent = <span class="kw-2">&amp;</span><span class="self">self</span>.span, level = <span class="string">"info"</span>, skip_all, err)]
+    </span><span class="kw">pub async fn </span>setup&lt;S: AsyncWrite + AsyncRead + Send + Unpin + <span class="lifetime">'static</span>&gt;(
         <span class="self">self</span>,
         socket: S,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;Verifier&lt;state::Setup&gt;, VerifierError&gt; {
-        <span class="kw">let </span><span class="kw-2">mut </span>mux = UidYamux::new(yamux::Config::default(), socket, yamux::Mode::Server);
-        <span class="kw">let </span>mux_control = BincodeMux::new(mux.control());
+        <span class="kw">let </span>(<span class="kw-2">mut </span>mux_fut, mux_ctrl) = attach_mux(socket, Role::Verifier);
 
-        <span class="kw">let </span><span class="kw-2">mut </span>mux_fut = MuxFuture {
-            fut: Box::pin(<span class="kw">async move </span>{ mux.run().<span class="kw">await</span>.map_err(VerifierError::from) }.fuse()),
-        };
+        <span class="comment">// Maximum thread forking concurrency of 8.
+        // TODO: Determine the optimal number of threads.
+        </span><span class="kw">let </span><span class="kw-2">mut </span>exec = Executor::new(mux_ctrl.clone(), <span class="number">8</span>);
+
+        <span class="kw">let </span><span class="kw-2">mut </span>io = mux_fut
+            .poll_with(
+                mux_ctrl
+                    .open_framed(<span class="string">b"tlsnotary"</span>)
+                    .map_err(VerifierError::from),
+            )
+            .<span class="kw">await</span><span class="question-mark">?</span>;
+
+        <span class="comment">// Receives protocol configuration from prover to perform compatibility check
+        </span><span class="kw">let </span>protocol_config = mux_fut
+            .poll_with(<span class="kw">async </span>{
+                <span class="kw">let </span>peer_configuration: ProtocolConfig = io.expect_next().<span class="kw">await</span><span class="question-mark">?</span>;
+                <span class="self">self</span>.config
+                    .protocol_config_validator()
+                    .validate(<span class="kw-2">&amp;</span>peer_configuration)<span class="question-mark">?</span>;
+
+                <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, VerifierError&gt;(peer_configuration)
+            })
+            .<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="kw">let </span>encoder_seed: [u8; <span class="number">32</span>] = rand::rngs::OsRng.gen();
-        <span class="kw">let </span>mpc_setup_fut = setup_mpc_backend(<span class="kw-2">&amp;</span><span class="self">self</span>.config, mux_control.clone(), encoder_seed);
-        <span class="kw">let </span>(mpc_tls, vm, ot_send, ot_recv, gf2, ot_fut) = <span class="macro">futures::select! </span>{
-            res = mpc_setup_fut.fuse() =&gt; res<span class="question-mark">?</span>,
-            <span class="kw">_ </span>= <span class="kw-2">&amp;mut </span>mux_fut =&gt; <span class="kw">return </span><span class="prelude-val">Err</span>(std::io::Error::from(std::io::ErrorKind::UnexpectedEof))<span class="question-mark">?</span>,
-        };
+        <span class="kw">let </span>(mpc_tls, vm, ot_send) = mux_fut
+            .poll_with(setup_mpc_backend(
+                <span class="kw-2">&amp;</span><span class="self">self</span>.config,
+                <span class="kw-2">&amp;</span>mux_ctrl,
+                <span class="kw-2">&amp;mut </span>exec,
+                encoder_seed,
+                protocol_config,
+            ))
+            .<span class="kw">await</span><span class="question-mark">?</span>;
+
+        <span class="kw">let </span>ctx = mux_fut
+            .poll_with(exec.new_thread().map_err(VerifierError::from))
+            .<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="prelude-val">Ok</span>(Verifier {
             config: <span class="self">self</span>.config,
+            span: <span class="self">self</span>.span,
             state: state::Setup {
-                mux: mux_control,
+                io,
+                mux_ctrl,
                 mux_fut,
                 mpc_tls,
                 vm,
                 ot_send,
-                ot_recv,
-                ot_fut,
-                gf2,
+                ctx,
                 encoder_seed,
             },
         })
@@ -443,7 +482,13 @@
     <span class="doccomment">/// Runs the TLS verifier to completion, notarizing the TLS session.
     ///
     /// This is a convenience method which runs all the steps needed for notarization.
-    </span><span class="kw">pub async fn </span>notarize&lt;S: AsyncWrite + AsyncRead + Send + Unpin + <span class="lifetime">&#39;static</span>, T&gt;(
+    ///
+    /// # Arguments
+    ///
+    /// * `socket` - The socket to the prover.
+    /// * `signer` - The signer used to sign the notarization result.
+    </span><span class="attr">#[instrument(parent = <span class="kw-2">&amp;</span><span class="self">self</span>.span, level = <span class="string">"info"</span>, skip_all, err)]
+    </span><span class="kw">pub async fn </span>notarize&lt;S: AsyncWrite + AsyncRead + Send + Unpin + <span class="lifetime">'static</span>, T&gt;(
         <span class="self">self</span>,
         socket: S,
         signer: <span class="kw-2">&amp;</span><span class="kw">impl </span>Signer&lt;T&gt;,
@@ -463,7 +508,12 @@
     <span class="doccomment">/// Runs the TLS verifier to completion, verifying the TLS session.
     ///
     /// This is a convenience method which runs all the steps needed for verification.
-    </span><span class="kw">pub async fn </span>verify&lt;S: AsyncWrite + AsyncRead + Send + Unpin + <span class="lifetime">&#39;static</span>&gt;(
+    ///
+    /// # Arguments
+    ///
+    /// * `socket` - The socket to the prover.
+    </span><span class="attr">#[instrument(parent = <span class="kw-2">&amp;</span><span class="self">self</span>.span, level = <span class="string">"info"</span>, skip_all, err)]
+    </span><span class="kw">pub async fn </span>verify&lt;S: AsyncWrite + AsyncRead + Send + Unpin + <span class="lifetime">'static</span>&gt;(
         <span class="self">self</span>,
         socket: S,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;(RedactedTranscript, RedactedTranscript, SessionInfo), VerifierError&gt; {
@@ -477,16 +527,16 @@
 
 <span class="kw">impl </span>Verifier&lt;state::Setup&gt; {
     <span class="doccomment">/// Runs the verifier until the TLS connection is closed.
+    </span><span class="attr">#[instrument(parent = <span class="kw-2">&amp;</span><span class="self">self</span>.span, level = <span class="string">"info"</span>, skip_all, err)]
     </span><span class="kw">pub async fn </span>run(<span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;Verifier&lt;state::Closed&gt;, VerifierError&gt; {
         <span class="kw">let </span>state::Setup {
-            mux,
+            io,
+            mux_ctrl,
             <span class="kw-2">mut </span>mux_fut,
-            <span class="kw-2">mut </span>mpc_tls,
+            mpc_tls,
             vm,
             ot_send,
-            ot_recv,
-            <span class="kw-2">mut </span>ot_fut,
-            gf2,
+            ctx,
             encoder_seed,
         } = <span class="self">self</span>.state;
 
@@ -495,32 +545,30 @@
             .unwrap()
             .as_secs();
 
-        <span class="macro">futures::select! </span>{
-            res = mpc_tls.run().fuse() =&gt; res<span class="question-mark">?</span>,
-            <span class="kw">_ </span>= <span class="kw-2">&amp;mut </span>mux_fut =&gt; <span class="kw">return </span><span class="prelude-val">Err</span>(std::io::Error::from(std::io::ErrorKind::UnexpectedEof))<span class="question-mark">?</span>,
-            res = ot_fut =&gt; <span class="kw">return </span><span class="prelude-val">Err</span>(res.map(|<span class="kw">_</span>| ()).expect_err(<span class="string">&quot;future will not return Ok here&quot;</span>))
-        };
+        <span class="kw">let </span>MpcTlsFollowerData {
+            handshake_commitment,
+            server_key: server_ephemeral_key,
+            bytes_sent: sent_len,
+            bytes_recv: recv_len,
+        } = mux_fut
+            .poll_with(mpc_tls.run().<span class="number">1</span>.map_err(VerifierError::from))
+            .<span class="kw">await</span><span class="question-mark">?</span>;
 
-        <span class="attr">#[cfg(feature = <span class="string">&quot;tracing&quot;</span>)]
-        </span><span class="macro">info!</span>(<span class="string">&quot;Finished TLS session&quot;</span>);
+        <span class="macro">info!</span>(<span class="string">"Finished TLS session"</span>);
 
-        <span class="kw">let </span>server_ephemeral_key = mpc_tls.server_key().expect(<span class="string">&quot;server key is set&quot;</span>);
         <span class="comment">// TODO: We should be able to skip this commitment and verify the handshake directly.
-        </span><span class="kw">let </span>handshake_commitment = mpc_tls
-            .handshake_commitment()
-            .expect(<span class="string">&quot;handshake commitment is set&quot;</span>);
-        <span class="kw">let </span>(sent_len, recv_len) = mpc_tls.bytes_transferred();
+        </span><span class="kw">let </span>handshake_commitment = handshake_commitment.expect(<span class="string">"handshake commitment is set"</span>);
 
         <span class="prelude-val">Ok</span>(Verifier {
             config: <span class="self">self</span>.config,
+            span: <span class="self">self</span>.span,
             state: state::Closed {
-                mux,
+                io,
+                mux_ctrl,
                 mux_fut,
                 vm,
                 ot_send,
-                ot_recv,
-                ot_fut,
-                gf2,
+                ctx,
                 encoder_seed,
                 start_time,
                 server_ephemeral_key,
@@ -536,10 +584,11 @@
     <span class="doccomment">/// Starts notarization of the TLS session.
     ///
     /// If the verifier is a Notary, this function will transition the verifier to the next state
-    /// where it can sign the prover&#39;s commitments to the transcript.
+    /// where it can sign the prover's commitments to the transcript.
     </span><span class="kw">pub fn </span>start_notarize(<span class="self">self</span>) -&gt; Verifier&lt;Notarize&gt; {
         Verifier {
             config: <span class="self">self</span>.config,
+            span: <span class="self">self</span>.span,
             state: <span class="self">self</span>.state.into(),
         }
     }
@@ -551,129 +600,126 @@
     </span><span class="kw">pub fn </span>start_verify(<span class="self">self</span>) -&gt; Verifier&lt;Verify&gt; {
         Verifier {
             config: <span class="self">self</span>.config,
+            span: <span class="self">self</span>.span,
             state: <span class="self">self</span>.state.into(),
         }
     }
 }
 
 <span class="doccomment">/// Performs a setup of the various MPC subprotocols.
-</span><span class="attr">#[cfg_attr(feature = <span class="string">&quot;tracing&quot;</span>, instrument(level = <span class="string">&quot;debug&quot;</span>, skip_all, err))]
-#[allow(clippy::type_complexity)]
+</span><span class="attr">#[instrument(level = <span class="string">"debug"</span>, skip_all, err)]
 </span><span class="kw">async fn </span>setup_mpc_backend(
     config: <span class="kw-2">&amp;</span>VerifierConfig,
-    <span class="kw-2">mut </span>mux: Mux,
+    mux: <span class="kw-2">&amp;</span>MuxControl,
+    exec: <span class="kw-2">&amp;mut </span>Executor,
     encoder_seed: [u8; <span class="number">32</span>],
-) -&gt; <span class="prelude-ty">Result</span>&lt;
-    (
-        MpcTlsFollower,
-        DEAPVm&lt;SharedSender, SharedReceiver&gt;,
-        SharedSender,
-        SharedReceiver,
-        ff::ConverterReceiver&lt;ff::Gf2_128, SharedReceiver&gt;,
-        OTFuture,
-    ),
-    VerifierError,
-&gt; {
-    <span class="kw">let </span>(ot_send_sink, ot_send_stream) = mux.get_channel(<span class="string">&quot;ot/1&quot;</span>).<span class="kw">await</span><span class="question-mark">?</span>.split();
-    <span class="kw">let </span>(ot_recv_sink, ot_recv_stream) = mux.get_channel(<span class="string">&quot;ot/0&quot;</span>).<span class="kw">await</span><span class="question-mark">?</span>.split();
+    protocol_config: ProtocolConfig,
+) -&gt; <span class="prelude-ty">Result</span>&lt;(MpcTlsFollower, DEAPThread, OTSender), VerifierError&gt; {
+    <span class="macro">debug!</span>(<span class="string">"starting MPC backend setup"</span>);
 
-    <span class="kw">let </span><span class="kw-2">mut </span>ot_sender_actor = OTSenderActor::new(
-        kos::Sender::new(
-            config.build_ot_sender_config(),
-            chou_orlandi::Receiver::new(config.build_base_ot_receiver_config()),
-        ),
-        ot_send_sink,
-        ot_send_stream,
+    <span class="kw">let </span><span class="kw-2">mut </span>ot_sender = kos::Sender::new(
+        config.build_ot_sender_config(),
+        chou_orlandi::Receiver::new(config.build_base_ot_receiver_config()),
     );
+    ot_sender.alloc(protocol_config.ot_sender_setup_count(Role::Verifier));
 
-    <span class="kw">let </span><span class="kw-2">mut </span>ot_receiver_actor = ReceiverActor::new(
-        kos::Receiver::new(
-            config.build_ot_receiver_config(),
-            chou_orlandi::Sender::new(config.build_base_ot_sender_config()),
-        ),
-        ot_recv_sink,
-        ot_recv_stream,
+    <span class="kw">let </span><span class="kw-2">mut </span>ot_receiver = kos::Receiver::new(
+        config.build_ot_receiver_config(),
+        chou_orlandi::Sender::new(config.build_base_ot_sender_config()),
     );
+    ot_receiver.alloc(protocol_config.ot_receiver_setup_count(Role::Verifier));
 
-    <span class="kw">let </span>ot_send = ot_sender_actor.sender();
-    <span class="kw">let </span>ot_recv = ot_receiver_actor.receiver();
+    <span class="kw">let </span>ot_sender = OTSender::new(ot_sender);
+    <span class="kw">let </span>ot_receiver = OTReceiver::new(ot_receiver);
 
-    <span class="attr">#[cfg(feature = <span class="string">&quot;tracing&quot;</span>)]
-    </span><span class="macro">debug!</span>(<span class="string">&quot;Starting OT setup&quot;</span>);
-
-    <span class="macro">futures::try_join!</span>(
-        ot_sender_actor
-            .setup(config.ot_count())
-            .map_err(VerifierError::from),
-        ot_receiver_actor
-            .setup(config.ot_count())
-            .map_err(VerifierError::from)
+    <span class="kw">let </span>(
+        ctx_vm,
+        ctx_ke_0,
+        ctx_ke_1,
+        ctx_prf_0,
+        ctx_prf_1,
+        ctx_encrypter_block_cipher,
+        ctx_encrypter_stream_cipher,
+        ctx_encrypter_ghash,
+        ctx_encrypter,
+        ctx_decrypter_block_cipher,
+        ctx_decrypter_stream_cipher,
+        ctx_decrypter_ghash,
+        ctx_decrypter,
+    ) = <span class="macro">futures::try_join!</span>(
+        exec.new_thread(),
+        exec.new_thread(),
+        exec.new_thread(),
+        exec.new_thread(),
+        exec.new_thread(),
+        exec.new_thread(),
+        exec.new_thread(),
+        exec.new_thread(),
+        exec.new_thread(),
+        exec.new_thread(),
+        exec.new_thread(),
+        exec.new_thread(),
+        exec.new_thread(),
     )<span class="question-mark">?</span>;
 
-    <span class="attr">#[cfg(feature = <span class="string">&quot;tracing&quot;</span>)]
-    </span><span class="macro">debug!</span>(<span class="string">&quot;OT setup complete&quot;</span>);
-
-    <span class="kw">let </span>ot_fut = OTFuture {
-        fut: Box::pin(
-            <span class="kw">async move </span>{
-                <span class="macro">futures::try_join!</span>(
-                    ot_sender_actor.run().map_err(VerifierError::from),
-                    ot_receiver_actor.run().map_err(VerifierError::from)
-                )<span class="question-mark">?</span>;
-
-                <span class="prelude-val">Ok</span>(ot_sender_actor)
-            }
-            .fuse(),
-        ),
-    };
-
-    <span class="kw">let </span><span class="kw-2">mut </span>vm = DEAPVm::new(
-        <span class="string">&quot;vm&quot;</span>,
-        GarbleRole::Follower,
+    <span class="kw">let </span>vm = DEAPThread::new(
+        DEAPRole::Follower,
         encoder_seed,
-        mux.get_channel(<span class="string">&quot;vm&quot;</span>).<span class="kw">await</span><span class="question-mark">?</span>,
-        Box::new(mux.clone()),
-        ot_send.clone(),
-        ot_recv.clone(),
+        ctx_vm,
+        ot_sender.clone(),
+        ot_receiver.clone(),
     );
 
-    <span class="kw">let </span>p256_sender_config = config.build_p256_sender_config();
-    <span class="kw">let </span>channel = mux.get_channel(p256_sender_config.id()).<span class="kw">await</span><span class="question-mark">?</span>;
-    <span class="kw">let </span>p256_send =
-        ff::ConverterSender::&lt;ff::P256, <span class="kw">_</span>&gt;::new(p256_sender_config, ot_send.clone(), channel);
-
-    <span class="kw">let </span>p256_receiver_config = config.build_p256_receiver_config();
-    <span class="kw">let </span>channel = mux.get_channel(p256_receiver_config.id()).<span class="kw">await</span><span class="question-mark">?</span>;
-    <span class="kw">let </span>p256_recv =
-        ff::ConverterReceiver::&lt;ff::P256, <span class="kw">_</span>&gt;::new(p256_receiver_config, ot_recv.clone(), channel);
-
-    <span class="kw">let </span>gf2_config = config.build_gf2_config();
-    <span class="kw">let </span>channel = mux.get_channel(gf2_config.id()).<span class="kw">await</span><span class="question-mark">?</span>;
-    <span class="kw">let </span>gf2 = ff::ConverterReceiver::&lt;ff::Gf2_128, <span class="kw">_</span>&gt;::new(gf2_config, ot_recv.clone(), channel);
-
-    <span class="kw">let </span>mpc_tls_config = config.build_mpc_tls_config();
-
-    <span class="kw">let </span>(ke, prf, encrypter, decrypter) = setup_components(
-        mpc_tls_config.common(),
+    <span class="kw">let </span>mpc_tls_config = config.build_mpc_tls_config(<span class="kw-2">&amp;</span>protocol_config);
+    <span class="kw">let </span>(ke, prf, encrypter, decrypter) = build_components(
         TlsRole::Follower,
-        <span class="kw-2">&amp;mut </span>mux,
-        <span class="kw-2">&amp;mut </span>vm,
-        p256_send,
-        p256_recv,
-        gf2.handle()
-            .map_err(|e| VerifierError::MpcError(Box::new(e)))<span class="question-mark">?</span>,
-    )
-    .<span class="kw">await
-    </span>.map_err(|e| VerifierError::MpcError(Box::new(e)))<span class="question-mark">?</span>;
+        mpc_tls_config.common(),
+        ctx_ke_0,
+        ctx_encrypter,
+        ctx_decrypter,
+        ctx_encrypter_ghash,
+        ctx_decrypter_ghash,
+        vm.new_thread(ctx_ke_1, ot_sender.clone(), ot_receiver.clone())<span class="question-mark">?</span>,
+        vm.new_thread(ctx_prf_0, ot_sender.clone(), ot_receiver.clone())<span class="question-mark">?</span>,
+        vm.new_thread(ctx_prf_1, ot_sender.clone(), ot_receiver.clone())<span class="question-mark">?</span>,
+        vm.new_thread(
+            ctx_encrypter_block_cipher,
+            ot_sender.clone(),
+            ot_receiver.clone(),
+        )<span class="question-mark">?</span>,
+        vm.new_thread(
+            ctx_decrypter_block_cipher,
+            ot_sender.clone(),
+            ot_receiver.clone(),
+        )<span class="question-mark">?</span>,
+        vm.new_thread(
+            ctx_encrypter_stream_cipher,
+            ot_sender.clone(),
+            ot_receiver.clone(),
+        )<span class="question-mark">?</span>,
+        vm.new_thread(
+            ctx_decrypter_stream_cipher,
+            ot_sender.clone(),
+            ot_receiver.clone(),
+        )<span class="question-mark">?</span>,
+        ot_sender.clone(),
+        ot_receiver.clone(),
+    );
 
-    <span class="kw">let </span>channel = mux.get_channel(mpc_tls_config.common().id()).<span class="kw">await</span><span class="question-mark">?</span>;
-    <span class="kw">let </span><span class="kw-2">mut </span>mpc_tls = MpcTlsFollower::new(mpc_tls_config, channel, ke, prf, encrypter, decrypter);
+    <span class="kw">let </span>channel = mux.open_framed(<span class="string">b"mpc_tls"</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+    <span class="kw">let </span><span class="kw-2">mut </span>mpc_tls = MpcTlsFollower::new(
+        mpc_tls_config,
+        Box::new(StreamExt::compat_stream(channel)),
+        ke,
+        prf,
+        encrypter,
+        decrypter,
+    );
 
     mpc_tls.setup().<span class="kw">await</span><span class="question-mark">?</span>;
 
-    <span class="attr">#[cfg(feature = <span class="string">&quot;tracing&quot;</span>)]
-    </span><span class="macro">debug!</span>(<span class="string">&quot;MPC backend setup complete&quot;</span>);
+    <span class="macro">debug!</span>(<span class="string">"MPC backend setup complete"</span>);
 
-    <span class="prelude-val">Ok</span>((mpc_tls, vm, ot_send, ot_recv, gf2, ot_fut))
+    <span class="prelude-val">Ok</span>((mpc_tls, vm, ot_sender))
 }
 </code></pre></div></section></main></body></html>
