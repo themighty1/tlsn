@@ -46,4 +46,4 @@ ENV VERIFIER_PATH="/usr/local/bin/verifier"
 
 VOLUME [ "/benches" ]
 WORKDIR "/benches"
-CMD ["/bin/bash", "-c", "bench && plot /benches/metrics.csv && cat /benches/metrics.csv"]
+CMD ["/bin/bash", "-c", "RUST_LOG=info bench && plot /benches/metrics.csv && cat /benches/metrics.csv"]

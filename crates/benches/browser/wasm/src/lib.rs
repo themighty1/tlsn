@@ -27,6 +27,8 @@ use web_sys::console;
 use web_time::Instant;
 use ws_stream_wasm::WsMeta;
 
+pub mod log;
+
 macro_rules! log {
     ( $( $t:tt )* ) => {
         console::log_1(&format!( $( $t )* ).into());
@@ -84,8 +86,6 @@ pub async fn main(
     .await?;
     let verifier_io = verifier_io_ws.into_io();
 
-    log!("connected to ws");
-
     // Connect to the native component of the browser prover.
     let (_, native_io_ws) = WsMeta::connect(
         &format!(
@@ -96,6 +96,9 @@ pub async fn main(
     )
     .await?;
     let mut native_io = FramedIo::new(Box::new(native_io_ws.into_io()));
+
+    log!("expecting config from the native component");
+
     let cfg: Config = native_io.expect_next().await?;
 
     let start_time = Instant::now();
