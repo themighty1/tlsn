@@ -20,6 +20,14 @@ pub enum TranscriptCommitmentKind {
         /// The hash algorithm used.
         alg: HashAlgId,
     },
+    /// A zk-friendly hash commitment. Currently, only `POSEIDON_CIRCOMLIB` is supported.
+    ///
+    /// Note that since the underlying hash algorithm does not support hashing a pre-image of an
+    /// arbitrary length, the pre-image will be chunked and each chunk will be committed to individually.
+    ZkFriendlyHash {
+        /// The hash algorithm used.
+        alg: HashAlgId,
+    },
 }
 
 /// Configuration for transcript commitments.
@@ -59,6 +67,17 @@ impl TranscriptCommitConfig {
     pub fn iter_hash(&self) -> impl Iterator<Item = (&(Direction, Idx), &HashAlgId)> {
         self.commits.iter().filter_map(|(idx, kind)| match kind {
             TranscriptCommitmentKind::Hash { alg } => Some((idx, alg)),
+            _ => None,
+        })
+    }
+
+    /// Returns an iterator over the zk-friendly hash commitment indices.
+    pub fn iter_zkfriendly_hash(&self) -> impl Iterator<Item = (&(Direction, Idx), &HashAlgId)> {
+        self.commits.iter().filter_map(|(idx, kind)| match kind {
+            TranscriptCommitmentKind::ZkFriendlyHash { alg } => {
+                assert!(*alg == HashAlgId::POSEIDON_CIRCOMLIB);
+                Some((idx, alg))
+            }
             _ => None,
         })
     }

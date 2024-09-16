@@ -58,6 +58,8 @@ fn test_api() {
     )
     .unwrap();
 
+    // Run the Authdecode protocol here.
+
     let request_config = RequestConfig::default();
     let mut request_builder = Request::builder(&request_config);
 

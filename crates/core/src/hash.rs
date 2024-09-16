@@ -71,6 +71,9 @@ impl HashAlgId {
     pub const BLAKE3: Self = Self(2);
     /// Keccak-256 hash algorithm.
     pub const KECCAK256: Self = Self(3);
+    /// Poseidon hash algorithm with parameters as in `circomlib`'s implementation.
+    /// See https://github.com/iden3/circomlib/blob/master/circuits/poseidon.circom
+    pub const POSEIDON_CIRCOMLIB: Self = Self(4);
 
     /// Creates a new hash algorithm identifier.
     ///
