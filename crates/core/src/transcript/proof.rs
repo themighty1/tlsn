@@ -10,6 +10,7 @@ use crate::{
     hash::Blinded,
     index::Index,
     transcript::{
+        chunked::ChunkedPlaintextHashSecret,
         commit::TranscriptCommitmentKind,
         encoding::{EncodingProof, EncodingProofError, EncodingTree},
         hash::{PlaintextHashProof, PlaintextHashProofError, PlaintextHashSecret},
@@ -53,9 +54,8 @@ impl TranscriptProof {
             let commitment = attestation_body.encoding_commitment().ok_or_else(|| {
                 TranscriptProofError::new(
                     ErrorKind::Encoding,
-                    format!(
-                        "contains an encoding proof but attestation is missing encoding commitment"
-                    ),
+                    "contains an encoding proof but attestation is missing encoding commitment"
+                        .to_string(),
                 )
             })?;
             let seq = proof.verify_with_provider(provider, &info.transcript_length, commitment)?;
@@ -144,6 +144,7 @@ pub struct TranscriptProofBuilder<'a> {
     transcript: &'a Transcript,
     encoding_tree: Option<&'a EncodingTree>,
     plaintext_hashes: &'a Index<PlaintextHashSecret>,
+    zkfriendly_hashes: &'a Index<ChunkedPlaintextHashSecret>,
     encoding_proof_idxs: HashSet<(Direction, Idx)>,
     hash_proofs: Vec<PlaintextHashProof>,
 }
@@ -154,12 +155,14 @@ impl<'a> TranscriptProofBuilder<'a> {
         transcript: &'a Transcript,
         encoding_tree: Option<&'a EncodingTree>,
         plaintext_hashes: &'a Index<PlaintextHashSecret>,
+        zkfriendly_hashes: &'a Index<ChunkedPlaintextHashSecret>,
     ) -> Self {
         Self {
             default_kind: TranscriptCommitmentKind::Encoding,
             transcript,
             encoding_tree,
             plaintext_hashes,
+            zkfriendly_hashes,
             encoding_proof_idxs: HashSet::default(),
             hash_proofs: Vec::new(),
         }
@@ -249,6 +252,34 @@ impl<'a> TranscriptProofBuilder<'a> {
                     *commitment,
                 ));
             }
+            TranscriptCommitmentKind::ZkFriendlyHash { .. } => {
+                let Some(PlaintextHashSecret {
+                    direction,
+                    commitment,
+                    blinder,
+                    ..
+                }) = self.plaintext_hashes.get_by_idx(&idx)
+                else {
+                    return Err(TranscriptProofBuilderError::new(
+                        BuilderErrorKind::MissingCommitment,
+                        format!(
+                            "hash commitment is missing for ranges in {} transcript",
+                            direction
+                        ),
+                    ));
+                };
+
+                let (_, data) = self
+                    .transcript
+                    .get(*direction, &idx)
+                    .expect("subsequence was checked to be in transcript")
+                    .into_parts();
+
+                self.hash_proofs.push(PlaintextHashProof::new(
+                    Blinded::new_with_blinder(data, blinder.clone()),
+                    *commitment,
+                ));
+            }
         }
 
         Ok(self)
@@ -273,7 +304,7 @@ impl<'a> TranscriptProofBuilder<'a> {
         let encoding_proof = if !self.encoding_proof_idxs.is_empty() {
             let encoding_tree = self.encoding_tree.expect("encoding tree is present");
             let proof = encoding_tree
-                .proof(&self.transcript, self.encoding_proof_idxs.iter())
+                .proof(self.transcript, self.encoding_proof_idxs.iter())
                 .expect("subsequences were checked to be in tree");
             Some(proof)
         } else {
@@ -340,7 +371,8 @@ mod tests {
             [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
         );
         let index = Index::default();
-        let mut builder = TranscriptProofBuilder::new(&transcript, None, &index);
+        let zkfriendly_index = Index::default();
+        let mut builder = TranscriptProofBuilder::new(&transcript, None, &index, &zkfriendly_index);
 
         assert!(builder.reveal(&(10..15), Direction::Sent).is_err());
         assert!(builder.reveal(&(10..15), Direction::Received).is_err());

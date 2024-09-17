@@ -4,7 +4,8 @@ use crate::{
     connection::{ServerCertOpening, ServerIdentityProof, ServerName},
     index::Index,
     transcript::{
-        encoding::EncodingTree, hash::PlaintextHashSecret, Transcript, TranscriptProofBuilder,
+        chunked::ChunkedPlaintextHashSecret, encoding::EncodingTree, hash::PlaintextHashSecret,
+        Transcript, TranscriptProofBuilder,
     },
 };
 
@@ -15,6 +16,7 @@ pub struct Secrets {
     pub(crate) server_cert_opening: ServerCertOpening,
     pub(crate) encoding_tree: Option<EncodingTree>,
     pub(crate) plaintext_hashes: Index<PlaintextHashSecret>,
+    pub(crate) zkfriendly_hashes: Index<ChunkedPlaintextHashSecret>,
     pub(crate) transcript: Transcript,
 }
 
@@ -42,6 +44,7 @@ impl Secrets {
             &self.transcript,
             self.encoding_tree.as_ref(),
             &self.plaintext_hashes,
+            &self.zkfriendly_hashes,
         )
     }
 }

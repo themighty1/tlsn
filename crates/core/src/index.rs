@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     attestation::{Field, FieldId},
     transcript::{
+        chunked::{ChunkedPlaintextHash, ChunkedPlaintextHashSecret},
         hash::{PlaintextHash, PlaintextHashSecret},
         Idx,
     },
@@ -96,6 +97,22 @@ impl From<Vec<Field<PlaintextHash>>> for Index<Field<PlaintextHash>> {
 impl From<Vec<PlaintextHashSecret>> for Index<PlaintextHashSecret> {
     fn from(items: Vec<PlaintextHashSecret>) -> Self {
         Self::new(items, |item: &PlaintextHashSecret| {
+            (&item.commitment, &item.idx)
+        })
+    }
+}
+
+impl From<Vec<Field<ChunkedPlaintextHash>>> for Index<Field<ChunkedPlaintextHash>> {
+    fn from(items: Vec<Field<ChunkedPlaintextHash>>) -> Self {
+        Self::new(items, |field: &Field<ChunkedPlaintextHash>| {
+            (&field.id, &field.data.idx)
+        })
+    }
+}
+
+impl From<Vec<ChunkedPlaintextHashSecret>> for Index<ChunkedPlaintextHashSecret> {
+    fn from(items: Vec<ChunkedPlaintextHashSecret>) -> Self {
+        Self::new(items, |item: &ChunkedPlaintextHashSecret| {
             (&item.commitment, &item.idx)
         })
     }

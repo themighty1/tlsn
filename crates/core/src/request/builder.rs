@@ -99,6 +99,7 @@ impl<'a> RequestBuilder<'a> {
             server_cert_opening,
             encoding_tree,
             plaintext_hashes: Index::default(),
+            zkfriendly_hashes: Index::default(),
             transcript,
         };
 
