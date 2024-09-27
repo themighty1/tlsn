@@ -68,7 +68,8 @@ fn test_api() {
         .server_name(server_name.clone())
         .server_cert_data(server_cert_data)
         .transcript(transcript)
-        .encoding_tree(encoding_tree);
+        .encoding_tree(encoding_tree)
+        .plaintext_hashes(transcripts_commitment_config.hashes());
 
     let (request, secrets) = request_builder.build(&provider).unwrap();
 

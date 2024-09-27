@@ -55,12 +55,15 @@ impl TranscriptCommitConfig {
         })
     }
 
-    /// Returns an iterator over the hash commitment indices.
-    pub fn iter_hash(&self) -> impl Iterator<Item = (&(Direction, Idx), &HashAlgId)> {
-        self.commits.iter().filter_map(|(idx, kind)| match kind {
-            TranscriptCommitmentKind::Hash { alg } => Some((idx, alg)),
-            _ => None,
-        })
+    /// Returns the hash commitments.
+    pub fn hashes(&self) -> Vec<((Direction, Idx), HashAlgId)> {
+        self.commits
+            .iter()
+            .filter_map(|(idx, kind)| match kind {
+                TranscriptCommitmentKind::Hash { alg } => Some((idx.clone(), *alg)),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
     }
 }
 

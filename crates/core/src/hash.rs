@@ -30,6 +30,10 @@ impl Default for HashProvider {
         algs.insert(HashAlgId::SHA256, Box::new(Sha256::default()));
         algs.insert(HashAlgId::BLAKE3, Box::new(Blake3::default()));
         algs.insert(HashAlgId::KECCAK256, Box::new(Keccak256::default()));
+        algs.insert(
+            HashAlgId::POSEIDON_CIRCOMLIB,
+            Box::new(PoseidonC::default()),
+        );
 
         Self { algs }
     }
@@ -239,6 +243,9 @@ pub trait HashAlgorithm {
 
     /// Computes the hash of the provided data with a prefix.
     fn hash_prefixed(&self, prefix: &[u8], data: &[u8]) -> Hash;
+
+    /// Computes the hash of the provided data with a blinder.
+    fn hash_blinded(&self, data: &[u8], blinder: &Blinder) -> Hash;
 }
 
 pub(crate) trait HashAlgorithmExt: HashAlgorithm {
@@ -353,6 +360,10 @@ mod sha2 {
             hasher.update(data);
             super::Hash::new(hasher.finalize().as_slice())
         }
+
+        fn hash_blinded(&self, data: &[u8], blinder: &super::Blinder) -> super::Hash {
+            self.hash(&[data, blinder.as_inner()].concat())
+        }
     }
 }
 
@@ -378,6 +389,10 @@ mod blake3 {
             hasher.update(prefix);
             hasher.update(data);
             super::Hash::new(hasher.finalize().as_bytes())
+        }
+
+        fn hash_blinded(&self, data: &[u8], blinder: &super::Blinder) -> super::Hash {
+            self.hash(&[data, blinder.as_inner()].concat())
         }
     }
 }
@@ -412,7 +427,60 @@ mod keccak {
             hasher.finalize(&mut output);
             super::Hash::new(&output)
         }
+
+        fn hash_blinded(&self, data: &[u8], blinder: &super::Blinder) -> super::Hash {
+            self.hash(&[data, blinder.as_inner()].concat())
+        }
     }
 }
 
 pub use keccak::Keccak256;
+
+mod poseidon_c {
+    // TODO factor out into a separate crate.
+    use authdecode_core::backend::{
+        halo2::{poseidon::poseidon_15, Bn256F},
+        traits::Field,
+    };
+    use mpz_core::serialize::CanonicalSerialize;
+
+    /// Poseidon Circomlib hash algorithm with padded pre-image.
+    #[derive(Default, Clone)]
+    pub struct PoseidonC {}
+
+    const BYTES_PER_FIELD_ELEMENT: usize = 31;
+
+    impl super::HashAlgorithm for PoseidonC {
+        fn id(&self) -> super::HashAlgId {
+            super::HashAlgId::POSEIDON_CIRCOMLIB
+        }
+
+        fn hash(&self, data: &[u8]) -> super::Hash {
+            let mut field_elements: Vec<Bn256F> = data
+                .chunks(BYTES_PER_FIELD_ELEMENT)
+                .map(|bytes| Bn256F::from_bytes_be(bytes.to_vec()))
+                .collect::<Vec<_>>();
+
+            // Pad with field elements to the count of 15
+
+            let output = poseidon_15(&field_elements.try_into().unwrap());
+            let output = output.to_bytes_be();
+            super::Hash::new(&output)
+        }
+
+        fn hash_prefixed(&self, prefix: &[u8], data: &[u8]) -> super::Hash {
+            let mut hasher = tiny_keccak::Keccak::v256();
+            hasher.update(prefix);
+            hasher.update(data);
+            let mut output = vec![0; 32];
+            hasher.finalize(&mut output);
+            super::Hash::new(&output)
+        }
+
+        fn hash_blinded(&self, data: &[u8], blinder: &super::Blinder) -> super::Hash {
+            self.hash(&[data, blinder.as_inner()].concat())
+        }
+    }
+}
+
+pub use poseidon_c::PoseidonC;

@@ -1,9 +1,10 @@
 use crate::{
     connection::{ServerCertData, ServerCertOpening, ServerName},
+    hash::HashAlgId,
     index::Index,
     request::{Request, RequestConfig},
     secrets::Secrets,
-    transcript::{encoding::EncodingTree, Transcript},
+    transcript::{encoding::EncodingTree, Direction, Idx, Transcript},
     CryptoProvider,
 };
 
@@ -14,6 +15,7 @@ pub struct RequestBuilder<'a> {
     server_cert_data: Option<ServerCertData>,
     encoding_tree: Option<EncodingTree>,
     transcript: Option<Transcript>,
+    plaintext_hashes: Option<Vec<((Direction, Idx), HashAlgId)>>,
 }
 
 impl<'a> RequestBuilder<'a> {
@@ -25,6 +27,7 @@ impl<'a> RequestBuilder<'a> {
             server_cert_data: None,
             encoding_tree: None,
             transcript: None,
+            plaintext_hashes: None,
         }
     }
 
@@ -52,6 +55,15 @@ impl<'a> RequestBuilder<'a> {
         self
     }
 
+    /// Sets the plaintext hashes.
+    pub fn plaintext_hashes(
+        &mut self,
+        plaintext_hashes: Vec<((Direction, Idx), HashAlgId)>,
+    ) -> &mut Self {
+        self.plaintext_hashes = Some(plaintext_hashes);
+        self
+    }
+
     /// Builds the attestation request and returns the corresponding secrets.
     pub fn build(
         self,
@@ -63,6 +75,7 @@ impl<'a> RequestBuilder<'a> {
             server_cert_data,
             encoding_tree,
             transcript,
+            plaintext_hashes,
         } = self;
 
         let signature_alg = *config.signature_alg();
@@ -87,6 +100,19 @@ impl<'a> RequestBuilder<'a> {
 
         let encoding_commitment_root = encoding_tree.as_ref().map(|tree| tree.root());
 
+        for hash in plaintext_hashes.unwrap() {
+            let ((dir, idx), alg) = hash;
+            let hasher = provider.hash.get(&alg).unwrap();
+
+            if alg == HashAlgId::POSEIDON_CIRCOMLIB {
+                if idx.count() != 1 {
+                    return Err(RequestBuilderError::new("hashing data in more than one range with POSEIDON_CIRCOMLIB is not supported"));
+                } else if idx.len() > 434 {
+                    // TODO use a const
+                    return Err(RequestBuilderError::new("hashing data of more than 434 bytes with POSEIDON_CIRCOMLIB is not supported"));
+                }
+            }
+        }
         // if has plaintext_hashes, hash each plaintext, store secrets in secret, put hashes in the request
         // if poseidon plaintext length > MAX ALLOWED LEN, return an error
 

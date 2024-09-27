@@ -65,7 +65,7 @@ impl Verifier<Notarize> {
                 info!("Finalized all MPC");
 
                 verifier
-                    .prove(io.expect_next().await?, encoder_seed)
+                    .verify(io.expect_next().await?, encoder_seed)
                     .unwrap();
 
                 debug!("received Authdecode commitment");
