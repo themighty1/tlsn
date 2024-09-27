@@ -4,6 +4,7 @@
 #![deny(clippy::all)]
 #![forbid(unsafe_code)]
 
+mod authdecode;
 mod config;
 mod error;
 mod future;

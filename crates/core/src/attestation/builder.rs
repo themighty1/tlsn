@@ -55,6 +55,7 @@ impl<'a> AttestationBuilder<'a, Accept> {
             hash_alg,
             server_cert_commitment: cert_commitment,
             encoding_commitment_root,
+            plaintext_hashes,
         } = request;
 
         if !config.supported_signature_algs().contains(&signature_alg) {

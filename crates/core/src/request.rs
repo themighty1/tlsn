@@ -16,10 +16,12 @@ mod config;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    attestation::Attestation,
+    attestation::{Attestation, Field},
     connection::ServerCertCommitment,
     hash::{HashAlgId, TypedHash},
+    index::Index,
     signing::SignatureAlgId,
+    transcript::hash::PlaintextHash,
 };
 
 pub use builder::{RequestBuilder, RequestBuilderError};
@@ -32,6 +34,7 @@ pub struct Request {
     pub(crate) hash_alg: HashAlgId,
     pub(crate) server_cert_commitment: ServerCertCommitment,
     pub(crate) encoding_commitment_root: Option<TypedHash>,
+    pub(crate) plaintext_hashes: Index<Field<PlaintextHash>>,
 }
 
 impl Request {

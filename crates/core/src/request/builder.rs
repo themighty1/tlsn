@@ -87,11 +87,17 @@ impl<'a> RequestBuilder<'a> {
 
         let encoding_commitment_root = encoding_tree.as_ref().map(|tree| tree.root());
 
+        // if has plaintext_hashes, hash each plaintext, store secrets in secret, put hashes in the request
+        // if poseidon plaintext length > MAX ALLOWED LEN, return an error
+
+        // Hardcode plaintext field Id from which plaintext starts in the attestation
+
         let request = Request {
             signature_alg,
             hash_alg,
             server_cert_commitment,
             encoding_commitment_root,
+            plaintext_hashes: Index::default(),
         };
 
         let secrets = Secrets {

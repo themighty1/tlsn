@@ -25,6 +25,7 @@
 //! To create a proof, use the [`TranscriptProofBuilder`] which is returned by
 //! [`Secrets::transcript_proof_builder`](crate::Secrets::transcript_proof_builder).
 
+pub mod authdecode;
 mod commit;
 #[doc(hidden)]
 pub mod encoding;

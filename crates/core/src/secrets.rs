@@ -1,3 +1,5 @@
+//! Secrets types.
+
 use serde::{Deserialize, Serialize};
 
 use crate::{

@@ -6,7 +6,10 @@ use tlsn_core::{
     presentation::PresentationOutput,
     request::{Request, RequestConfig},
     signing::SignatureAlgId,
-    transcript::{encoding::EncodingTree, Direction, Transcript, TranscriptCommitConfigBuilder},
+    transcript::{
+        encoding::{EncodingProvider, EncodingTree},
+        Direction, Transcript, TranscriptCommitConfigBuilder,
+    },
     CryptoProvider,
 };
 use tlsn_data_fixtures::http::{request::GET_WITH_HEADER, response::OK_JSON};
@@ -68,6 +71,10 @@ fn test_api() {
         .encoding_tree(encoding_tree);
 
     let (request, secrets) = request_builder.build(&provider).unwrap();
+
+    // At this point the Authdecode protocol will be run if there was a commitment algorithm used
+    // which requires it. After that, the prover resumes the attestation process by sending the
+    // `request` to the Notary.
 
     let attestation_config = AttestationConfig::builder()
         .supported_signature_algs([SignatureAlgId::SECP256K1])

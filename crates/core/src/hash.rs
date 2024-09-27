@@ -72,6 +72,9 @@ impl HashAlgId {
     /// Keccak-256 hash algorithm.
     pub const KECCAK256: Self = Self(3);
 
+    /// circomlib Poseidon.
+    pub const POSEIDON_CIRCOMLIB: Self = Self(4);
+
     /// Creates a new hash algorithm identifier.
     ///
     /// # Panics
@@ -252,7 +255,14 @@ impl<T: HashAlgorithm + ?Sized> HashAlgorithmExt for T {}
 
 /// A hash blinder.
 #[derive(Clone, Serialize, Deserialize)]
-pub(crate) struct Blinder([u8; 16]);
+pub struct Blinder([u8; 16]);
+
+impl Blinder {
+    /// Returns a reference to the inner value.
+    pub fn as_inner(&self) -> &[u8; 16] {
+        &self.0
+    }
+}
 
 opaque_debug::implement!(Blinder);
 

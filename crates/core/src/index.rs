@@ -1,3 +1,5 @@
+//! Index types.
+
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
@@ -17,6 +19,7 @@ pub(crate) struct Index<T> {
     // Lookup by field id
     field_ids: HashMap<FieldId, usize>,
     // Lookup by transcript index
+    /// TODO: should be  by Idx + Direction
     transcript_idxs: HashMap<Idx, usize>,
 }
 

@@ -2,13 +2,34 @@
 //!
 //! The prover deals with a TLS verifier that is only a notary.
 
+use crate::authdecode::{
+    authdecode_prover, CommitmentSetWithSalt, SingleRangeIdx, TranscriptEncoder,
+};
+
 use super::{state::Notarize, Prover, ProverError};
+use crate::authdecode::TranscriptProver;
+use authdecode_core::{
+    backend::{
+        halo2::Bn256F,
+        traits::{Field, ProverBackend},
+    },
+    id::IdCollection,
+    msgs::Commit,
+    prover::{commitment::CommitmentData, state::Committed},
+    Prover as AuthDecodeProver,
+};
 use mpz_ot::VerifiableOTReceiver;
+use serde::Serialize;
 use serio::{stream::IoStreamExt as _, SinkExt as _};
 use tlsn_core::{
     attestation::Attestation,
+    hash::HashAlgId,
     request::{Request, RequestConfig},
-    transcript::{encoding::EncodingTree, Transcript, TranscriptCommitConfig},
+    transcript::{
+        authdecode::{AuthdecodeInputs, AuthdecodeInputsWithAlg},
+        encoding::EncodingTree,
+        Transcript, TranscriptCommitConfig,
+    },
     Secrets,
 };
 use tracing::{debug, instrument};
@@ -53,7 +74,7 @@ impl Prover<Notarize> {
         builder
             .server_name(self.config.server_name().clone())
             .server_cert_data(server_cert_data)
-            .transcript(transcript);
+            .transcript(transcript.clone());
 
         if let Some(config) = transcript_commit_config {
             if config.has_encoding() {
@@ -71,17 +92,47 @@ impl Prover<Notarize> {
 
         let (request, secrets) = builder.build(provider).map_err(ProverError::attestation)?;
 
+        let is_authdecode = true;
+
+        let prover = match is_authdecode {
+            true => Some(authdecode_prover(
+                &request,
+                &secrets,
+                &*encoding_provider,
+                &transcript,
+            )),
+            false => None,
+        };
+        let mut prover = prover.unwrap();
+
         let attestation = mux_fut
             .poll_with(async {
                 debug!("starting finalization");
 
                 io.send(request.clone()).await?;
 
+                //if let Some(mut prover) = prover {
+                let msg = prover.commit().unwrap();
+                io.send(msg).await?;
+                debug!("sent Authdecode commitment");
+                //}
+
                 ot_recv.accept_reveal(&mut ctx).await?;
 
                 debug!("received OT secret");
 
-                vm.finalize().await?;
+                let seed = vm
+                    .finalize()
+                    .await?
+                    .expect("The seed should be returned to the follower");
+
+                //if let Some(mut prover) = prover {
+                // Now that the full encodings were authenticated, it is safe to proceed to the
+                // proof generation phase of the AuthDecode protocol.
+                let msg = prover.prove(seed).unwrap();
+                io.send(msg).await?;
+                debug!("sent Authdecode proof");
+                //}
 
                 let attestation: Attestation = io.expect_next().await?;
 
