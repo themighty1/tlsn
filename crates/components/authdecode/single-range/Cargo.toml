@@ -1,0 +1,19 @@
+[package]
+name = "tlsn-authdecode-single-range"
+authors = ["TLSNotary Team"]
+description = "Convenience types for running AuthDecode over data contained in a single range"
+keywords = ["tls", "mpc", "2pc"]
+categories = ["cryptography"]
+license = "MIT OR Apache-2.0"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "authdecode_single_range"
+
+[dependencies]
+tlsn-authdecode-core = { path = "../authdecode-core" }
+itybity = "0.2"
+tlsn-core = { workspace = true }
+
+serde =  { workspace = true }

@@ -5,6 +5,7 @@ members = [
     "crates/components/aead",
     "crates/components/authdecode/authdecode",
     "crates/components/authdecode/authdecode-core",
+    "crates/components/authdecode/single-range",
     "crates/components/block-cipher",
     "crates/components/hmac-sha256",
     "crates/components/hmac-sha256-circuits",
@@ -42,7 +43,8 @@ opt-level = 1
 notary-client = { path = "crates/notary/client" }
 notary-server = { path = "crates/notary/server" }
 tlsn-authdecode = { path = "crates/components/authdecode/authdecode" }
-tlsn-authdecode-core = { path = "crates/components/authdecode/authdecode-core" } 
+tlsn-authdecode-core = { path = "crates/components/authdecode/authdecode-core" }
+tlsn-authdecode-single-range = { path = "crates/components/authdecode/single-range" }
 tls-server-fixture = { path = "crates/tls/server-fixture" }
 tlsn-aead = { path = "crates/components/aead" }
 tlsn-block-cipher = { path = "crates/components/block-cipher" }

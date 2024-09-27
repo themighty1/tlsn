@@ -16,6 +16,7 @@ force-st = ["mpz-common/force-st"]
 [dependencies]
 tlsn-authdecode = { workspace = true }
 tlsn-authdecode-core = { workspace = true }
+tlsn-authdecode-single-range = { workspace = true }
 tlsn-common = { workspace = true }
 tlsn-core = { workspace = true }
 tlsn-formats = { workspace = true, optional = true }
@@ -40,7 +41,6 @@ mpz-share-conversion = { workspace = true }
 bytes = { workspace = true }
 derive_builder = { workspace = true }
 futures = { workspace = true }
-itybity = "0.2"
 opaque-debug = { workspace = true }
 rand = { workspace = true }
 serde = { workspace = true }

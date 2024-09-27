@@ -2,9 +2,7 @@
 //!
 //! The prover deals with a TLS verifier that is only a notary.
 
-use crate::authdecode::{
-    authdecode_prover, CommitmentSetWithSalt, SingleRangeIdx, TranscriptEncoder,
-};
+use crate::authdecode::{authdecode_prover, CommitmentSetWithSalt, TranscriptEncoder};
 
 use super::{state::Notarize, Prover, ProverError};
 use crate::authdecode::TranscriptProver;

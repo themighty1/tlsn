@@ -26,13 +26,50 @@ pub struct AuthdecodeInputsWithAlg {
 /// Docs
 /// The motivation for this type is not to expose core types and their non-public methods
 /// to the prover crate.  
-pub struct AuthdecodeInputs(Vec<AuthdecodeInput>);
+pub struct AuthdecodeInputs(Vec<AuthDecodeInput>);
 
-struct AuthdecodeInput {
+struct AuthDecodeInput {
     salt: [u8; 16],
     plaintext: Vec<u8>,
     encodings: Vec<Vec<u8>>,
     range: Range<usize>,
+}
+
+/// Docs
+pub struct AuthDecodeAlg(HashAlgId);
+
+impl AuthDecodeAlg {
+    /// Returns
+    pub fn alg(&self) -> &HashAlgId {
+        &self.0
+    }
+}
+
+impl TryFrom<&Request> for AuthDecodeAlg {
+    type Error = &'static str;
+
+    fn try_from(request: &Request) -> Result<Self, Self::Error> {
+        let mut hash_alg: Option<HashAlgId> = None;
+
+        for hash in request.plaintext_hashes.iter() {
+            if COMPATIBLE_ALGS.contains(&hash.data.hash.alg) {
+                if hash_alg.is_none() {
+                    hash_alg = Some(hash.data.hash.alg);
+                } else if hash_alg != Some(hash.data.hash.alg) {
+                    return Err(
+                        "Only one AuthDecode-compatible hash algorithm is allowed in commitments",
+                    );
+                }
+            }
+        }
+
+        if hash_alg.is_none() {
+            return Err("At least one AuthDecode-compatible hash commitment is expected");
+        }
+
+        // It is safe to `unwrap` since we return an error early if hash_alg.is_none().
+        Ok(AuthDecodeAlg(hash_alg.unwrap()))
+    }
 }
 
 impl
@@ -57,7 +94,7 @@ impl
 
         let mut hash_alg: Option<HashAlgId> = None;
 
-        let inputs: Vec<AuthdecodeInput> = request
+        let inputs: Vec<AuthDecodeInput> = request
             .plaintext_hashes
             .iter()
             .filter(|hash| COMPATIBLE_ALGS.contains(&hash.data.hash.alg))
@@ -86,7 +123,7 @@ impl
 
                 let range = hash.data.idx.iter_ranges().next().unwrap();
 
-                Ok(AuthdecodeInput {
+                Ok(AuthDecodeInput {
                     encodings,
                     plaintext,
                     range,

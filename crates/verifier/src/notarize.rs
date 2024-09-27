@@ -3,6 +3,7 @@
 //! The TLS verifier is only a notary.
 
 use super::{state::Notarize, Verifier, VerifierError};
+use authdecode_core::msgs::Commit;
 use mpz_ot::CommittedOTSender;
 use serio::{stream::IoStreamExt, SinkExt as _};
 
@@ -11,6 +12,8 @@ use tlsn_core::{
     request::Request,
 };
 use tracing::{debug, info, instrument};
+
+use crate::authdecode::{authdecode_verifier, TranscriptVerifier};
 
 impl Verifier<Notarize> {
     /// Notarizes the TLS session.
@@ -38,6 +41,20 @@ impl Verifier<Notarize> {
                 // finalization.
                 let request: Request = io.expect_next().await?;
 
+                let is_authdecode = true;
+
+                let verifier = match is_authdecode {
+                    true => Some(authdecode_verifier(&request)),
+                    false => None,
+                };
+                let mut verifier = verifier.unwrap();
+
+                verifier
+                    .receive_commitments(io.expect_next().await?)
+                    .unwrap();
+
+                debug!("received Authdecode commitment");
+
                 // Finalize all MPC before attesting.
                 ot_send.reveal(&mut ctx).await?;
 
@@ -46,6 +63,12 @@ impl Verifier<Notarize> {
                 vm.finalize().await?;
 
                 info!("Finalized all MPC");
+
+                verifier
+                    .prove(io.expect_next().await?, encoder_seed)
+                    .unwrap();
+
+                debug!("received Authdecode commitment");
 
                 let mut builder = Attestation::builder(config)
                     .accept_request(request)
