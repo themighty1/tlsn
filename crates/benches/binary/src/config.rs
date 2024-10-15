@@ -118,5 +118,6 @@ pub struct BenchInstance {
     pub upload_size: usize,
     pub download_size: usize,
     pub defer_decryption: bool,
+    /// Whether this instance should be used for memory profiling.
     pub memory_profile: bool,
 }

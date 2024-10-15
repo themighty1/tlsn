@@ -1,16 +1,14 @@
 pub mod config;
 pub mod metrics;
+mod preprocess;
 pub mod prover;
+pub mod prover_main;
+pub mod verifier_main;
 
 use std::{
     io,
     process::{Command, Stdio},
 };
-
-use hmac_sha256::{MpcPrf, Prf, PrfConfig, Role};
-use mpz_common::executor::test_st_executor;
-use mpz_garble::{config::Role as DEAPRole, protocol::deap::DEAPThread, Memory};
-use mpz_ot::ideal::ot::ideal_ot;
 
 pub const PROVER_NAMESPACE: &str = "prover-ns";
 pub const PROVER_INTERFACE: &str = "prover-veth";

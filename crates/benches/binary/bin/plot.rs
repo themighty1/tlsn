@@ -27,7 +27,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let _chart = runtime_vs_latency(&all_data)?;
     let _chart = runtime_vs_bandwidth(&all_data)?;
-    let _chart = download_size_vs_memory(&all_data)?;
+
+    // Memory profiling is not compatible with browser benches.
+    if cfg!(not(feature = "browser-bench")) {
+        let _chart = download_size_vs_memory(&all_data)?;
+    }
 
     Ok(())
 }
@@ -35,15 +39,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 fn download_size_vs_memory(all_data: &[Metrics]) -> Result<Chart, Box<dyn std::error::Error>> {
     const TITLE: &str = "Download Size vs Memory";
 
+    let prover_kind: String = all_data
+        .first()
+        .map(|s| s.kind.clone().into())
+        .unwrap_or_default();
+
     let data: Vec<Vec<f32>> = all_data
         .iter()
         .filter(|record| record.name == "download_volume" && record.heap_max_bytes.is_some())
-        .map(|record| vec![record.download_size as f32, record.heap_max_bytes.unwrap() as f32 / 1024.0 / 1024.0])
+        .map(|record| {
+            vec![
+                record.download_size as f32,
+                record.heap_max_bytes.unwrap() as f32 / 1024.0 / 1024.0,
+            ]
+        })
         .collect();
 
     // https://github.com/yuankunzhang/charming
     let chart = Chart::new()
-        .title(Title::new().text(TITLE))
+        .title(
+            Title::new()
+                .text(TITLE)
+                .subtext(format!("{} Prover", prover_kind)),
+        )
         .tooltip(Tooltip::new().trigger(Trigger::Axis))
         .legend(Legend::new().orient(Orient::Vertical))
         .toolbox(
