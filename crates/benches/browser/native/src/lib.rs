@@ -24,7 +24,12 @@ use chromiumoxide::{
 };
 use futures::{Future, FutureExt, StreamExt};
 use rust_embed::RustEmbed;
-use tokio::{io, io::AsyncWriteExt, net::TcpListener, task::JoinHandle};
+use tokio::{
+    io::{self, AsyncWriteExt},
+    net::TcpListener,
+    sync::oneshot::{self, Sender as OneshotSender},
+    task::JoinHandle,
+};
 use tracing::{debug, error, info};
 use warp::Filter;
 
@@ -57,6 +62,8 @@ pub struct BrowserProver {
     browser: Browser,
     /// A handle to the http server.
     http_server: JoinHandle<()>,
+    /// A sender of the shutdown signel to the http server.
+    http_shutdown_sender: OneshotSender<()>,
     /// Handles to the relays.
     relays: Vec<JoinHandle<Result<(), anyhow::Error>>>,
 }
@@ -100,7 +107,7 @@ impl ProverTrait for BrowserProver {
 
         relays.push(spawn_websocket_relay(ws_ip, ws_port).await?);
 
-        let http_server = spawn_http_server(wasm_ip, wasm_port)?;
+        let (http_server, http_shutdown_sender) = spawn_http_server(wasm_ip, wasm_port)?;
 
         // Relay data from the wasm component to the server.
         relays.push(spawn_port_relay(wasm_to_server_port, server_io).await?);
@@ -143,11 +150,12 @@ impl ProverTrait for BrowserProver {
             wasm_io,
             browser,
             http_server,
+            http_shutdown_sender,
             relays,
         })
     }
 
-    async fn run(&mut self) -> anyhow::Result<u64> {
+    async fn run(mut self) -> anyhow::Result<u64> {
         let runtime: Runtime = self.wasm_io.expect_next().await.unwrap();
 
         _ = self.clean_up().await?;
@@ -161,9 +169,11 @@ impl ProverTrait for BrowserProver {
 }
 
 impl BrowserProver {
-    async fn clean_up(&mut self) -> anyhow::Result<()> {
-        // Kill the http server.
-        self.http_server.abort();
+    async fn clean_up(mut self) -> anyhow::Result<()> {
+        // Request browser closure.
+        self.browser.close().await?;
+        // Request http server shutdown.
+        let _ = self.http_shutdown_sender.send(());
 
         // Kill all relays.
         let _ = self
@@ -172,9 +182,10 @@ impl BrowserProver {
             .map(|task| task.abort())
             .collect::<Vec<_>>();
 
-        // Close the browser.
-        self.browser.close().await?;
+        // Wait for the browser to close.
         self.browser.wait().await?;
+        // Wait for http server to shutdown.
+        self.http_server.await?;
 
         Ok(())
     }
@@ -202,8 +213,7 @@ pub async fn spawn_port_relay(
         let (tcp, _) = listener
             .accept()
             .await
-            .context("failed to accept a connection")
-            .unwrap();
+            .context("failed to accept a connection")?;
 
         relay_data(Box::new(tcp), channel).await
     });
@@ -284,7 +294,12 @@ async fn spawn_browser(
     Ok(browser)
 }
 
-pub fn spawn_http_server(ip: IpAddr, port: u16) -> anyhow::Result<JoinHandle<()>> {
+pub fn spawn_http_server(
+    ip: IpAddr,
+    port: u16,
+) -> anyhow::Result<(JoinHandle<()>, OneshotSender<()>)> {
+    let (tx, rx) = oneshot::channel::<()>();
+
     let handle = tokio::spawn(async move {
         // Serve embedded files with additional headers.
         let data_serve = warp_embed::embed(&Data);
@@ -297,10 +312,15 @@ pub fn spawn_http_server(ip: IpAddr, port: u16) -> anyhow::Result<JoinHandle<()>
                 warp::reply::with_header(reply, "Cross-Origin-Embedder-Policy", "require-corp")
             });
 
-        warp::serve(data_serve_with_headers).run((ip, port)).await;
+        let (_addr, server) =
+            warp::serve(data_serve_with_headers).bind_with_graceful_shutdown((ip, port), async {
+                rx.await.ok();
+            });
+
+        server.await;
     });
 
-    Ok(handle)
+    Ok((handle, tx))
 }
 
 async fn register_listeners(page: &Page) -> Result<impl Future<Output = ()>> {

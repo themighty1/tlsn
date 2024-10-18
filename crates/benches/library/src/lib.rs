@@ -29,7 +29,7 @@ pub trait ProverTrait {
         Self: Sized;
 
     /// Runs the prover. Returns the total run time in seconds.
-    async fn run(&mut self) -> anyhow::Result<u64>;
+    async fn run(mut self) -> anyhow::Result<u64>;
 
     /// Returns the kind of the prover.
     fn kind(&self) -> ProverKind;

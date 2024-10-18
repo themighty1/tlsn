@@ -115,7 +115,7 @@ async fn run_instance(instance: BenchInstance, io: impl AsyncIo) -> anyhow::Resu
     let (client_conn, server_conn) = tokio::io::duplex(1 << 16);
     tokio::spawn(bind(server_conn.compat()));
 
-    let mut prover = BenchProver::setup(
+    let prover = BenchProver::setup(
         upload_size,
         download_size,
         defer_decryption,
@@ -124,11 +124,13 @@ async fn run_instance(instance: BenchInstance, io: impl AsyncIo) -> anyhow::Resu
     )
     .await?;
 
+    let kind = prover.kind();
+
     let runtime = prover.run().await?;
 
     Ok(Metrics {
         name,
-        kind: prover.kind(),
+        kind,
         upload,
         upload_delay,
         download,

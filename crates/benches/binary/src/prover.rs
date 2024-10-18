@@ -33,7 +33,7 @@ impl ProverTrait for NativeProver {
         })
     }
 
-    async fn run(&mut self) -> anyhow::Result<u64> {
+    async fn run(mut self) -> anyhow::Result<u64> {
         let io = std::mem::take(&mut self.io).unwrap();
         let client_conn = std::mem::take(&mut self.client_conn).unwrap();
 
