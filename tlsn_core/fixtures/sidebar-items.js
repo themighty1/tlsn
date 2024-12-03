@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["client_random","encoder","encoder_seed","encoding_provider","handshake_commitment","handshake_data","handshake_summary","notary_signing_key","server_cert_details","server_ephemeral_key","server_kx_details","server_random","session_header"],"mod":["cert"]};
+window.SIDEBAR_ITEMS = {"fn":["attestation_fixture","encoder_seed","encoding_provider","notary_signing_key","request_fixture"],"struct":["ChaChaProvider","ConnectionFixture","RequestFixture"]};
