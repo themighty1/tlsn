@@ -116,20 +116,29 @@ impl Executor {
                 };
             }
             Target::Browser => {
+                eprintln!("=== CHROME STARTUP DEBUG ===");
+                eprintln!("Detecting Chrome executable path...");
                 let chrome_path = chromiumoxide::detection::default_executable(Default::default())
                     .map_err(|_| anyhow!("failed to detect chrome path"))?;
+                eprintln!("Chrome path detected: {:?}", chrome_path);
 
                 let rpc_addr = match self.config.id() {
                     Id::Zero => self.config.network().rpc_0,
                     Id::One => self.config.network().rpc_1,
                 };
+                eprintln!("RPC address: {:?}", rpc_addr);
                 let (wasm_addr, wasm_port) = self.config.network().wasm;
+                eprintln!("WASM address: {}:{}", wasm_addr, wasm_port);
 
                 // Create a temporary directory for the browser profile.
+                eprintln!("Creating temporary directory for browser profile...");
                 let tmp = duct::cmd!("mktemp", "-d").read()?;
                 let tmp = tmp.trim();
+                eprintln!("Temporary directory created: {}", tmp);
 
                 let headed = !self.display_env.is_empty();
+                eprintln!("Browser mode: {}", if headed { "headed" } else { "headless" });
+                eprintln!("Namespace: {}", self.ns.name());
 
                 // Build command args based on headed/headless mode
                 let mut args: Vec<String> = vec![
@@ -144,6 +153,8 @@ impl Executor {
                     // This allows the browser to connect to X11/Wayland while in the namespace
                     let user =
                         std::env::var("USER").context("USER environment variable not set")?;
+                    eprintln!("Headed mode - dropping to user: {}", user);
+                    eprintln!("Display environment vars: {:?}", self.display_env);
                     args.extend(["sudo".into(), "-E".into(), "-u".into(), user, "env".into()]);
                     args.extend(self.display_env.clone());
                 }
@@ -171,13 +182,19 @@ impl Executor {
                     "--allowed-ips=10.250.0.1".into(),
                 ]);
 
+                eprintln!("Full Chrome command:");
+                eprintln!("  sudo {}", args.join(" "));
+                eprintln!("");
+
                 let process = duct::cmd("sudo", &args);
 
+                eprintln!("Starting Chrome process...");
                 let process = if !cfg!(feature = "debug") {
                     process.stderr_capture().stdout_capture().start()?
                 } else {
                     process.start()?
                 };
+                eprintln!("Chrome process started with PID: {:?}", process.pids());
 
                 const TIMEOUT: usize = 10000;
                 const DELAY: usize = 100;
@@ -188,17 +205,36 @@ impl Executor {
                     ..Default::default()
                 };
 
+                let connect_url = format!("http://{}:{}", rpc_addr.0, PORT_BROWSER);
+                eprintln!("Attempting to connect to Chrome DevTools at: {}", connect_url);
+                eprintln!("Will retry for up to {} ms (delay: {} ms)", TIMEOUT, DELAY);
+
                 let (browser, mut handler) = loop {
+                    eprintln!("Connection attempt {} (elapsed: {} ms)", retries + 1, retries * DELAY);
                     match Browser::connect_with_config(
-                        format!("http://{}:{}", rpc_addr.0, PORT_BROWSER),
+                        connect_url.clone(),
                         config.clone(),
                     )
                     .await
                     {
-                        Ok(browser) => break browser,
+                        Ok(browser) => {
+                            eprintln!("✅ Successfully connected to Chrome!");
+                            break browser;
+                        }
                         Err(e) => {
+                            eprintln!("Connection attempt {} failed: {:?}", retries + 1, e);
                             retries += 1;
                             if retries * DELAY > TIMEOUT {
+                                eprintln!("❌ Connection timed out after {} attempts ({} ms)", retries, retries * DELAY);
+                                eprintln!("Last error: {:?}", e);
+
+                                // Check if process is still alive
+                                if let Ok(None) = process.try_wait() {
+                                    eprintln!("Chrome process is still running but not accepting connections");
+                                } else {
+                                    eprintln!("Chrome process may have exited");
+                                }
+
                                 return Err(e.into());
                             }
                             tokio::time::sleep(Duration::from_millis(DELAY as u64)).await;
@@ -206,6 +242,7 @@ impl Executor {
                     }
                 };
 
+                eprintln!("Spawning Chrome event handler task...");
                 tokio::spawn(async move {
                     while let Some(res) = handler.next().await {
                         if let Err(e) = res {
@@ -222,9 +259,12 @@ impl Executor {
                     }
                 });
 
+                let page_url = format!("http://{wasm_addr}:{wasm_port}/index.html");
+                eprintln!("Creating new page with URL: {}", page_url);
                 let page = browser
-                    .new_page(&format!("http://{wasm_addr}:{wasm_port}/index.html"))
+                    .new_page(&page_url)
                     .await?;
+                eprintln!("✅ Page created successfully");
 
                 #[cfg(feature = "debug")]
                 tokio::spawn(register_listeners(page.clone()).await?);
@@ -258,15 +298,18 @@ impl Executor {
                     .map(|_| ()))
                 }
 
+                eprintln!("Configuring page settings...");
                 page.execute(EnableParams::builder().build()).await?;
                 page.execute(SetCacheDisabledParams {
                     cache_disabled: true,
                 })
                 .await?;
+                eprintln!("Reloading page with cache disabled...");
                 page.execute(ReloadParams::builder().ignore_cache(true).build())
                     .await?;
                 page.wait_for_navigation().await?;
                 page.bring_to_front().await?;
+                eprintln!("Initializing WASM executor via JavaScript...");
                 page.evaluate(format!(
                     r#"
                         (async () => {{
@@ -280,8 +323,10 @@ impl Executor {
                     config = serde_json::to_string(&self.config)?
                 ))
                 .await?;
+                eprintln!("✅ WASM executor initialized successfully");
 
                 let rpc = Rpc::new_browser(page);
+                eprintln!("=== CHROME STARTUP COMPLETE ===\n");
 
                 self.state = State::Started {
                     process,
