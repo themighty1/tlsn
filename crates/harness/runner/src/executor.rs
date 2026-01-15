@@ -268,6 +268,7 @@ impl Executor {
                 page.wait_for_navigation().await?;
                 page.bring_to_front().await?;
 
+                eprintln!("Waiting for WASM executor to load...");
                 // Wait for WASM executor module to load before calling init
                 page.evaluate(
                     r#"
@@ -288,7 +289,9 @@ impl Executor {
                     "#
                 )
                 .await?;
+                eprintln!("✅ WASM executor module loaded");
 
+                eprintln!("Initializing WASM executor with config...");
                 page.evaluate(format!(
                     r#"
                         (async () => {{
