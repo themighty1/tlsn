@@ -1,0 +1,13 @@
+#### Minimal Debug Benchmark ####
+# Single lightweight benchmark for quick debugging and testing
+# Minimal payload sizes and single iteration
+
+[[group]]
+name = "debug"
+bandwidth = 100
+protocol_latency = 10
+upload-size = 256
+download-size = 256
+
+[[bench]]
+group = "debug"
