@@ -336,7 +336,7 @@ impl Executor {
                 page.evaluate(format!(
                     r#"
                         (async () => {{
-                            const config = JSON.parse('{{config}}');
+                            const config = JSON.parse('{config}');
                             console.log("Initializing executor with config:", config);
                             await window.executor.init(config);
                             console.log("✅ Executor initialized successfully");
