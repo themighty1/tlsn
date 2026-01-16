@@ -30,7 +30,36 @@ impl WasmServer {
 
     /// Spawns a new wasm server.
     pub fn start(&mut self) -> Result<()> {
-        let handle = duct::cmd!(
+        eprintln!("Starting WASM server...");
+        eprintln!("  Binary path: {:?}", self.path);
+        eprintln!("  Namespace: {}", self.namespace.name());
+        eprintln!("  Address: {}:{}", self.addr.0, self.addr.1);
+
+        // Check if binary exists
+        if !self.path.exists() {
+            eprintln!("❌ ERROR: WASM server binary not found at {:?}", self.path);
+            return Err(anyhow::anyhow!("WASM server binary not found at {:?}", self.path));
+        }
+
+        // Check if static directory exists (relative to wasm-server binary location)
+        if let Some(parent) = self.path.parent() {
+            let static_dir = parent.parent().unwrap().join("static");
+            eprintln!("  Checking for static directory at: {:?}", static_dir);
+            if !static_dir.exists() {
+                eprintln!("❌ WARNING: Static directory not found at {:?}", static_dir);
+            } else {
+                eprintln!("✅ Static directory exists");
+                // Check for generated WASM files
+                let generated_dir = static_dir.join("generated");
+                if generated_dir.exists() {
+                    eprintln!("✅ Generated directory exists");
+                } else {
+                    eprintln!("❌ WARNING: Generated directory not found at {:?}", generated_dir);
+                }
+            }
+        }
+
+        let cmd = duct::cmd!(
             "sudo",
             "ip",
             "netns",
@@ -40,10 +69,16 @@ impl WasmServer {
             format!("ADDR={}", self.addr.0),
             format!("PORT={}", self.addr.1),
             &self.path,
-        )
-        .stderr_capture()
-        .stdout_capture()
-        .start()?;
+        );
+
+        let handle = if !cfg!(feature = "debug") {
+            cmd.stderr_capture().stdout_capture().start()?
+        } else {
+            eprintln!("  Running with debug output enabled");
+            cmd.start()?
+        };
+
+        eprintln!("✅ WASM server process started with PID: {:?}", handle.pids());
 
         self.handle = Some(handle);
 
