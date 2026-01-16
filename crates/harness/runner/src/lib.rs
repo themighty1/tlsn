@@ -478,7 +478,8 @@ pub async fn main() -> Result<()> {
     }
 
     // Shut down the executors before exiting.
-    if tokio::time::timeout(Duration::from_secs(5), async move {
+    eprintln!("Shutting down executors...");
+    if tokio::time::timeout(Duration::from_secs(5), async {
         _ = tokio::join!(runner.exec_p.shutdown(), runner.exec_v.shutdown());
     })
     .await
@@ -487,9 +488,21 @@ pub async fn main() -> Result<()> {
         eprintln!("executor shutdown timed out");
     }
 
+    // Explicitly shut down proxies and WASM server
+    eprintln!("Shutting down websocket proxies...");
+    runner.proto_proxy.shutdown();
+    runner.app_proxy.shutdown();
+    eprintln!("Shutting down WASM server...");
+    runner.wasm_server.shutdown();
+    eprintln!("Shutting down server fixture...");
+    runner.server_fixture.shutdown();
+
+    eprintln!("All services shut down, exiting...");
+
     if exit_code != 0 {
         std::process::exit(exit_code);
     }
 
-    Ok(())
+    // Force exit to ensure all background tasks are terminated
+    std::process::exit(0);
 }
