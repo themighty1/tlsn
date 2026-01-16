@@ -425,19 +425,32 @@ impl Executor {
                 process, browser, ..
             } = state
             else {
+                eprintln!("Shutdown called but executor not started");
                 return Ok(());
             };
 
+            eprintln!("Starting executor shutdown...");
+
             if let Some(mut browser) = browser {
-                browser.close().await?;
+                eprintln!("Closing browser...");
+                // Add timeout to browser.close() to avoid hanging
+                match tokio::time::timeout(Duration::from_secs(3), browser.close()).await {
+                    Ok(Ok(_)) => eprintln!("✅ Browser closed successfully"),
+                    Ok(Err(e)) => eprintln!("Browser close returned error: {:?}", e),
+                    Err(_) => eprintln!("⚠️  Browser close timed out after 3 seconds"),
+                }
             };
 
+            eprintln!("Killing Chrome process...");
             tokio::task::spawn_blocking(move || {
-                _ = process.kill();
-                _ = process.wait();
+                let kill_result = process.kill();
+                eprintln!("Process kill result: {:?}", kill_result);
+                let wait_result = process.wait();
+                eprintln!("Process wait result: {:?}", wait_result);
             })
             .await?;
 
+            eprintln!("✅ Executor shutdown complete");
             Ok(())
         }
     }
