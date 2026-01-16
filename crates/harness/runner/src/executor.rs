@@ -271,20 +271,20 @@ impl Executor {
                 // Wait for WASM executor module to load before calling init
                 page.evaluate(
                     r#"
-                        (async () => {{
+                        (async () => {
                             let attempts = 0;
                             const maxAttempts = 100; // 10 seconds max
-                            while (!window.executor && attempts < maxAttempts) {{
-                                console.log(`Waiting for window.executor... (attempt ${{attempts + 1}}/${{maxAttempts}})`);
+                            while (!window.executor && attempts < maxAttempts) {
+                                console.log("Waiting for window.executor... (attempt " + (attempts + 1) + "/" + maxAttempts + ")");
                                 await new Promise(resolve => setTimeout(resolve, 100));
                                 attempts++;
-                            }}
-                            if (!window.executor) {{
-                                throw new Error(`WASM executor not available after ${{attempts}} attempts (10 seconds)`);
-                            }}
-                            console.log(`✅ window.executor is available after ${{attempts}} attempts`);
+                            }
+                            if (!window.executor) {
+                                throw new Error("WASM executor not available after " + attempts + " attempts (10 seconds)");
+                            }
+                            console.log("✅ window.executor is available after " + attempts + " attempts");
                             return true;
-                        }})();
+                        })();
                     "#
                 )
                 .await?;
@@ -292,7 +292,7 @@ impl Executor {
                 page.evaluate(format!(
                     r#"
                         (async () => {{
-                            const config = JSON.parse('{config}');
+                            const config = JSON.parse('{{config}}');
                             console.log("Initializing executor with config:", config);
                             await window.executor.init(config);
                             console.log("✅ Executor initialized successfully");
