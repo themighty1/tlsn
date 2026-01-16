@@ -131,47 +131,9 @@ impl Network {
         .run()?;
 
         // Bring up loopback interfaces in all namespaces
-        duct::cmd!(
-            "sudo",
-            "ip",
-            "netns",
-            "exec",
-            &self.ns_0.name,
-            "ip",
-            "link",
-            "set",
-            "lo",
-            "up"
-        )
-        .run()?;
-
-        duct::cmd!(
-            "sudo",
-            "ip",
-            "netns",
-            "exec",
-            &self.ns_1.name,
-            "ip",
-            "link",
-            "set",
-            "lo",
-            "up"
-        )
-        .run()?;
-
-        duct::cmd!(
-            "sudo",
-            "ip",
-            "netns",
-            "exec",
-            &self.ns_app.name,
-            "ip",
-            "link",
-            "set",
-            "lo",
-            "up"
-        )
-        .run()?;
+        self.ns_0.bring_up_loopback()?;
+        self.ns_1.bring_up_loopback()?;
+        self.ns_app.bring_up_loopback()?;
 
         ip_route(&self.ns_0, "default", &self.veth_rpc_0.0.name)?;
         ip_route(&self.ns_1, "default", &self.veth_rpc_1.0.name)?;
