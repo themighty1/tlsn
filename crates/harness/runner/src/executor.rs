@@ -161,6 +161,7 @@ impl Executor {
 
                 args.push(chrome_path.to_string_lossy().into());
                 args.push(format!("--remote-debugging-port={PORT_BROWSER}"));
+                args.push("--remote-debugging-address=0.0.0.0".into());
 
                 if headed {
                     // Headed mode: no headless, add flags to suppress first-run dialogs
@@ -205,6 +206,7 @@ impl Executor {
                     ..Default::default()
                 };
 
+                // Connect to Chrome via the namespace's routable IP
                 let connect_url = format!("http://{}:{}", rpc_addr.0, PORT_BROWSER);
                 eprintln!("Attempting to connect to Chrome DevTools at: {}", connect_url);
                 eprintln!("Will retry for up to {} ms (delay: {} ms)", TIMEOUT, DELAY);
