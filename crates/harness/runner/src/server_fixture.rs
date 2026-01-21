@@ -49,10 +49,12 @@ impl ServerFixture {
     }
 
     /// Shuts down the server fixture.
-    pub fn shutdown(&self) {
-        self.handle.as_ref().inspect(|handle| {
-            _ = handle.kill();
-        });
+    pub fn shutdown(&mut self) {
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.kill();
+            // Wait for process to be fully reaped
+            let _ = handle.wait();
+        }
     }
 }
 
