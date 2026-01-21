@@ -488,16 +488,23 @@ pub async fn main() -> Result<()> {
         eprintln!("executor shutdown timed out");
     }
 
-    // Explicitly shut down proxies and WASM server
+    // Explicitly shut down proxies and services
     eprintln!("Shutting down websocket proxies...");
     runner.proto_proxy.shutdown();
     runner.app_proxy.shutdown();
     eprintln!("Shutting down WASM server...");
-    runner.wasm_server.shutdown();
+    runner.wasm_server.shutdown();  // Now waits for process to exit
     eprintln!("Shutting down server fixture...");
-    runner.server_fixture.shutdown();
+    runner.server_fixture.shutdown();  // Now waits for process to exit
 
     eprintln!("All services shut down, exiting...");
+
+    // Spawn a watchdog thread that will force exit if main thread hangs
+    std::thread::spawn(|| {
+        std::thread::sleep(Duration::from_secs(5));
+        eprintln!("Shutdown watchdog: forcing exit after 5s timeout");
+        std::process::exit(0);
+    });
 
     if exit_code != 0 {
         std::process::exit(exit_code);
