@@ -477,6 +477,13 @@ pub async fn main() -> Result<()> {
         },
     }
 
+    // Spawn a watchdog thread that will force exit if shutdown hangs
+    std::thread::spawn(|| {
+        std::thread::sleep(Duration::from_secs(10));
+        eprintln!("Shutdown watchdog: forcing exit after 10s timeout");
+        std::process::exit(0);
+    });
+
     // Shut down the executors before exiting.
     eprintln!("Shutting down executors...");
     if tokio::time::timeout(Duration::from_secs(5), async {
@@ -493,18 +500,11 @@ pub async fn main() -> Result<()> {
     runner.proto_proxy.shutdown();
     runner.app_proxy.shutdown();
     eprintln!("Shutting down WASM server...");
-    runner.wasm_server.shutdown();  // Now waits for process to exit
+    runner.wasm_server.shutdown();
     eprintln!("Shutting down server fixture...");
-    runner.server_fixture.shutdown();  // Now waits for process to exit
+    runner.server_fixture.shutdown();
 
     eprintln!("All services shut down, exiting...");
-
-    // Spawn a watchdog thread that will force exit if main thread hangs
-    std::thread::spawn(|| {
-        std::thread::sleep(Duration::from_secs(5));
-        eprintln!("Shutdown watchdog: forcing exit after 5s timeout");
-        std::process::exit(0);
-    });
 
     if exit_code != 0 {
         std::process::exit(exit_code);

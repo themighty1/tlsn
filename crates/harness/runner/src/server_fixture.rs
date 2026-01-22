@@ -52,8 +52,7 @@ impl ServerFixture {
     pub fn shutdown(&mut self) {
         if let Some(handle) = self.handle.take() {
             let _ = handle.kill();
-            // Wait for process to be fully reaped
-            let _ = handle.wait();
+            // Don't wait - watchdog will force exit if process doesn't die
         }
     }
 }
