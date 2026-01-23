@@ -1,9 +1,9 @@
 (function() {
-    var implementors = Object.fromEntries([["tlsn_prover",[["impl <a class=\"trait\" href=\"https://doc.rust-lang.org/1.83.0/core/future/future/trait.Future.html\" title=\"trait core::future::future::Future\">Future</a> for <a class=\"struct\" href=\"tlsn_prover/struct.ProverFuture.html\" title=\"struct tlsn_prover::ProverFuture\">ProverFuture</a>"]]]]);
+    const implementors = Object.fromEntries([["tlsn",[["impl&lt;Io&gt; Future for <a class=\"struct\" href=\"tlsn/struct.Session.html\" title=\"struct tlsn::Session\">Session</a>&lt;Io&gt;<div class=\"where\">where\n    Io: AsyncRead + AsyncWrite + Unpin,</div>",0],["impl&lt;Io&gt; Future for <a class=\"struct\" href=\"tlsn/struct.SessionDriver.html\" title=\"struct tlsn::SessionDriver\">SessionDriver</a>&lt;Io&gt;<div class=\"where\">where\n    Io: AsyncRead + AsyncWrite + Unpin,</div>",0],["impl&lt;S&gt; Future for <a class=\"struct\" href=\"tlsn/prover/struct.Prover.html\" title=\"struct tlsn::prover::Prover\">Prover</a>&lt;<a class=\"struct\" href=\"tlsn/prover/state/struct.Connected.html\" title=\"struct tlsn::prover::state::Connected\">Connected</a>&lt;S&gt;&gt;<div class=\"where\">where\n    S: AsyncRead + AsyncWrite + Send + Unpin + 'static,</div>",0],["impl&lt;S&gt; Future for <a class=\"struct\" href=\"tlsn/prover/struct.ProverFuture.html\" title=\"struct tlsn::prover::ProverFuture\">ProverFuture</a>&lt;S&gt;<div class=\"where\">where\n    S: AsyncRead + AsyncWrite + Send + Unpin + 'static,</div>",0]]]]);
     if (window.register_implementors) {
         window.register_implementors(implementors);
     } else {
         window.pending_implementors = implementors;
     }
 })()
-//{"start":57,"fragment_lengths":[310]}
+//{"start":59,"fragment_lengths":[1084]}
