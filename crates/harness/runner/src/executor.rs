@@ -150,6 +150,7 @@ impl Executor {
 
                 args.push(chrome_path.to_string_lossy().into());
                 args.push(format!("--remote-debugging-port={PORT_BROWSER}"));
+                args.push("--remote-debugging-address=0.0.0.0".into());
 
                 if headed {
                     // Headed mode: no headless, add flags to suppress first-run dialogs
@@ -267,6 +268,26 @@ impl Executor {
                     .await?;
                 page.wait_for_navigation().await?;
                 page.bring_to_front().await?;
+
+                // Wait for WASM executor module to load before calling init
+                page.evaluate(
+                    r#"
+                        (async () => {
+                            let attempts = 0;
+                            const maxAttempts = 100; // 10 seconds max
+                            while (!window.executor && attempts < maxAttempts) {
+                                await new Promise(resolve => setTimeout(resolve, 100));
+                                attempts++;
+                            }
+                            if (!window.executor) {
+                                throw new Error("WASM executor not available after " + attempts + " attempts (10 seconds)");
+                            }
+                            return true;
+                        })();
+                    "#
+                )
+                .await?;
+
                 page.evaluate(format!(
                     r#"
                         (async () => {{
