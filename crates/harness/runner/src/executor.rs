@@ -150,6 +150,7 @@ impl Executor {
 
                 args.push(chrome_path.to_string_lossy().into());
                 args.push(format!("--remote-debugging-port={PORT_BROWSER}"));
+                args.push("--remote-debugging-address=0.0.0.0".into());
 
                 if headed {
                     // Headed mode: no headless, add flags to suppress first-run dialogs
